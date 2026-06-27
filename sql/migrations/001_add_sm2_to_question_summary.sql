@@ -1,0 +1,6 @@
+-- SM-2 spaced repetition fields for question_summary
+ALTER TABLE question_summary
+  ADD COLUMN IF NOT EXISTS easiness_factor REAL NOT NULL DEFAULT 2.5,
+  ADD COLUMN IF NOT EXISTS interval_days INTEGER NOT NULL DEFAULT 1,
+  ADD COLUMN IF NOT EXISTS repetitions INTEGER NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS next_review_date DATE NOT NULL DEFAULT CURRENT_DATE;

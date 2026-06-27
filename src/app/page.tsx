@@ -1,5 +1,8 @@
 'use client';
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, type CSSProperties } from 'react';
+import { generateSuggestion } from '@/lib/suggestion-engine';
+import { estimateRank } from '@/lib/rank-estimator';
+import HomeScreen from '@/components/HomeScreen';
 
 const QS = [
   {id:0,text:'「システム状態の視認性」とは、ユーザーに現在の状態を常に知らせることを意味する。',type:'ox',answer:true,explain:'適切なフィードバックを適切なタイミングで提供し、ユーザーが現在何が起きているか常に把握できるようにすることです。',point:'進行状況バー、ローディングスピナーなどが代表例。',principle:'第1原則：システム状態の視認性'},
@@ -26,45 +29,23 @@ const SUCCESS_FACTORS = [
   {id:'past_review',label:'前回の復習が効いた',sub:'過去の間違いを覚えていた',ico:'🔁'},
   {id:'intuition',label:'直感が当たった',sub:'根拠は薄いが正解できた',ico:'⚡'},
 ];
-const PROPOSALS: Record<string,Record<string,string>> = {
-  knowledge:{C:'「{p}」の基礎から学び直してください。まず用語カードで定義を確認し、教科書の該当箇所を精読しましょう。',B:'「{p}」の知識に抜けがあります。類似問題を3問解いて定着を確認してください。',A:'知識の細部に不安があります。用語の定義を声に出して説明できるか確認してみてください。'},
-  understanding:{C:'「{p}」の概念の理解が不十分です。具体例を3つ自分で考え説明してみましょう。',B:'概念は知っているが深さが足りません。「なぜそうなるか」を自分の言葉で説明する練習をしてください。',A:'理解の応用力を高める必要があります。実際のUIを見て原則を当てはめる練習が効果的です。'},
-  skip:{C:'問題文のキーワードに下線を引き、選択肢を読む前に自分の答えを先に考える習慣をつけてください。',B:'問題文の重要語句を意識して読む練習が必要です。',A:'急がず問題文を2回読む習慣をつけましょう。'},
-  calc:{C:'計算や論理展開の過程を書き出す習慣をつけてください。',B:'計算ステップを丁寧に確認しましょう。解答後に検算する習慣をつけてください。',A:'引き続き計算過程を書き出す習慣を続けてください。'},
-  careless:{C:'選択肢を全部読んでから選ぶ。「本当にそうか？」と自問する習慣をつけてください。',B:'直感で答えを決めていませんか？根拠を確認してから解答する癖をつけましょう。',A:'答えの根拠を1文で説明できるか確認してみてください。'},
-  time:{C:'問題を解くときは一問一問に集中し、焦らず確認する習慣をつけてください。',B:'解答前に一度立ち止まる「確認の間」を意識してください。',A:'最後の見直しを欠かさない習慣を続けましょう。'},
-};
-const SUCCESS_PROPOSALS: Record<string,Record<string,string>> = {
-  solid_knowledge:{C:'知識の定着が偶然でないか確認しましょう。同系統の問題を解いて再現性を確かめてください。',B:'「{p}」の知識はしっかり定着しています。この調子で他の原則も固めましょう。',A:'完全に定着しています。人に説明できるレベルを目指しましょう。'},
-  deep_understanding:{C:'理解はできていますが、まだ不安定かもしれません。別の角度の問題でも通用するか確認しましょう。',B:'「{p}」の理解が深まっています。応用問題にも挑戦してみましょう。',A:'理解が定着しています。他の原則との関連性も考えてみましょう。'},
-  careful_read:{C:'丁寧に読めたのは良い兆候です。この読み方を他の問題にも適用しましょう。',B:'問題文を正確に読む習慣がついてきています。継続しましょう。',A:'読解の精度が高いです。スピードも意識してみましょう。'},
-  good_elimination:{C:'消去法が機能しました。次は根拠を持って一発で選べるようにしましょう。',B:'選択肢の比較が上手くなっています。判断基準を明確にしましょう。',A:'消去法と直接判断の両方が使えています。'},
-  past_review:{C:'復習の効果が出ています。このサイクルを継続しましょう。',B:'過去の振り返りが定着に繋がっています。',A:'復習習慣が完全に身についています。'},
-  intuition:{C:'直感が当たりましたが、根拠を言語化できるか確認しておきましょう。',B:'直感は当たっていますが、理由づけも意識すると安定します。',A:'直感と理論が一致しています。素晴らしい状態です。'},
-};
-const ACTIONS: Record<string,{txt:string,when:string}[]> = {
-  knowledge:[{txt:'用語カードで定義を確認する',when:'今日'},{txt:'教科書の該当箇所を精読する',when:'明日'},{txt:'類似問題を3問解いて定着確認',when:'次回から'}],
-  understanding:[{txt:'具体例を3つ自分で考えてみる',when:'今日'},{txt:'「なぜそうなるか」を声に出して説明する',when:'明日'},{txt:'実際のUIで原則を当てはめる練習',when:'今週中'}],
-  skip:[{txt:'問題文のキーワードに下線を引く',when:'次回から'},{txt:'選択肢を読む前に答えを先に考える',when:'今回から'},{txt:'問題文を2回読んでから解答する',when:'今回から'}],
-  calc:[{txt:'計算過程をすべて書き出す',when:'今回から'},{txt:'解答後に検算する',when:'今回から'},{txt:'間違えたステップを特定してメモ',when:'次回から'}],
-  careless:[{txt:'選択肢を全部読んでから選ぶ',when:'今回から'},{txt:'「本当にそうか？」と自問する',when:'今回から'},{txt:'答えの根拠を1文で言えるか確認',when:'次回から'}],
-  time:[{txt:'解答前に「確認の間」を意識する',when:'今回から'},{txt:'最後に見直しの時間を必ず取る',when:'今回から'},{txt:'焦らず一問一問に集中する',when:'今回から'}],
-};
-const REINFORCE_ACTIONS: Record<string,{txt:string,when:string}[]> = {
-  solid_knowledge:[{txt:'同系統の問題を解いて再現性を確認',when:'今日'},{txt:'用語の定義を人に説明してみる',when:'今週中'}],
-  deep_understanding:[{txt:'別の角度からの応用問題に挑戦する',when:'今日'},{txt:'他の原則との関連性を考える',when:'今週中'}],
-  careful_read:[{txt:'この読み方を他の問題にも適用する',when:'次回から'},{txt:'読解スピードも意識してみる',when:'次回から'}],
-  good_elimination:[{txt:'判断基準を1文でメモしておく',when:'今日'},{txt:'消去法なしで一発で選べるか試す',when:'次回から'}],
-  past_review:[{txt:'このサイクルを継続する',when:'次回から'},{txt:'復習ノートに今回の気づきを追加',when:'今日'}],
-  intuition:[{txt:'直感の根拠を言語化してメモする',when:'今日'},{txt:'次回も同じ直感が働くか試す',when:'次回から'}],
-};
-
-interface QSummary{rank:'A'|'B'|'C';attemptCount:number;correctCount:number;lastAttempt:string|null;}
-interface HistRecord{id:string;qid:number;timestamp:string;isCorrect:boolean;causes:string[];memo:string;actions:string[];rank:'A'|'B'|'C';}
+interface QSummary{rank:'A'|'B'|'C';attemptCount:number;correctCount:number;lastAttempt:string|null;easinessFactor:number;intervalDays:number;repetitions:number;nextReviewDate:string|null;consecutiveCorrect:number;consecutiveWrong:number;}
+interface HistRecord{id:string;qid:number;timestamp:string;isCorrect:boolean;causes:string[];memo:string;actions:string[];rank:'A'|'B'|'C';suggestedRank?:'A'|'B'|'C'|null;}
+interface QuestionHistory{timestamp:string;isCorrect:boolean;causes:string[];memo:string;rank:'A'|'B'|'C';actions:string[];}
 interface LatestCause{isCorrect:boolean;causes:string[];}
 function trunc(s:string,n:number){return s.length>n?s.slice(0,n)+'…':s;}
 function fmtDate(iso:string|null){if(!iso)return '-';const d=new Date(iso);return `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;}
 function fmtDateFull(iso:string){const d=new Date(iso);return `${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;}
+function fmtRelativeDays(iso:string){const then=new Date(iso);const now=new Date();const days=Math.floor((now.getTime()-then.getTime())/(1000*60*60*24));if(days<=0)return '今日';if(days===1)return '昨日';return `${days}日前`;}
+function causeLabelsFromIds(causeIds:string[],isCorrect:boolean){const rl=isCorrect?SUCCESS_FACTORS:CAUSES;return causeIds.map(c=>rl.find(x=>x.id===c)?.label??c);}
+function getChangeIndicator(older:QuestionHistory,newer:QuestionHistory):{icon:string;text:string;color:string}|null{if(older.isCorrect&&!newer.isCorrect)return{icon:'🔴',text:'前回正解でしたが今回は間違えました。気を引き締めましょう',color:'#dc2626'};const o=older.rank,n=newer.rank;if(o==='C'&&n==='C')return{icon:'🔴',text:'同じ課題が続いています。アプローチを変えてみましょう',color:'#dc2626'};if(o==='C'&&n==='B')return{icon:'🟡',text:'少し改善しています。この調子で続けましょう',color:'#d97706'};if(o==='B'&&n==='A')return{icon:'🟢',text:'大きく成長しています！',color:'#059669'};if(o==='A'&&n==='A')return{icon:'✅',text:'安定して定着しています',color:'#059669'};return null;}
+function HistorySkeleton(){return(<div style={{background:'#f8f9fc',borderRadius:8,padding:10,marginBottom:10,border:'1px solid #e5e7eb'}}>{[1,2,3].map(i=><div key={i} style={{height:10,background:'#e5e7eb',borderRadius:4,marginBottom:6,width:`${100-i*15}%`}}/>)}</div>);}
+function PrevRecordCard({record,bdgStyle,title}:{record:QuestionHistory;bdgStyle:(r:'A'|'B'|'C'|undefined)=>CSSProperties;title:string}){const labels=causeLabelsFromIds(record.causes,record.isCorrect);return(<div style={{background:'#fff',borderRadius:8,padding:9,marginBottom:6,border:'1px solid #e5e7eb',fontSize:10}}><div style={{fontWeight:700,marginBottom:4,color:'#374151'}}>{title}</div><div style={{display:'flex',alignItems:'center',gap:6,marginBottom:3,flexWrap:'wrap'}}><span>結果: {record.isCorrect?'✅ 正解':'❌ 不正解'}</span><span style={bdgStyle(record.rank)}>ランク: {record.rank}</span></div>{labels.length>0&&<div style={{marginBottom:3}}>原因: {labels.join('、')}</div>}{record.memo&&<div style={{color:'#6b7280',fontStyle:'italic'}}>メモ: 「{record.memo}」</div>}{record.actions?.length>0&&<div style={{color:'#6b7280',marginTop:3}}>アクション: {record.actions.join(' / ')}</div>}</div>);}
+function todayStr(){return new Date().toISOString().slice(0,10);}
+function fmtReviewDate(dateStr:string|null){if(!dateStr)return '';if(dateStr<=todayStr())return '今日復習';const d=new Date(`${dateStr}T00:00:00`);return `復習 ${d.getMonth()+1}/${d.getDate()}`;}
+function reviewSortKey(qid:number,questions:Record<number,QSummary>):[number,string]{const qd=questions[qid];if(!qd)return [0,''];const due=qd.nextReviewDate??todayStr();if(due<=todayStr())return [1,due];return [2,due];}
+function getConsecutiveWrong(history:HistRecord[],qid:number):number{const records=[...history].filter(h=>h.qid===qid).sort((a,b)=>b.timestamp.localeCompare(a.timestamp));let count=1;for(const h of records){if(!h.isCorrect)count++;else break;}return count;}
+const EMPTY_Q:QSummary={rank:'C',attemptCount:0,correctCount:0,lastAttempt:null,easinessFactor:2.5,intervalDays:1,repetitions:0,nextReviewDate:null,consecutiveCorrect:0,consecutiveWrong:0};
 export default function Home() {
   const [tab, setTab] = useState<'learn'|'history'|'stats'>('learn');
   const [questions, setQuestions] = useState<Record<number,QSummary>>({});
@@ -79,6 +60,23 @@ export default function Home() {
   const [selectedActions, setSelectedActions] = useState<Record<number,boolean>>({});
   const [saving, setSaving] = useState(false);
   const [savedMsg, setSavedMsg] = useState(false);
+  const [questionHistory, setQuestionHistory] = useState<QuestionHistory[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyExpanded, setHistoryExpanded] = useState(false);
+  const [sessionRank, setSessionRank] = useState<'A'|'B'|'C'|null>(null);
+  const [rankUserModified, setRankUserModified] = useState(false);
+  const [showHomeScreen, setShowHomeScreen] = useState(true);
+  const [planSortOrder, setPlanSortOrder] = useState<number[]|null>(null);
+
+  const fetchQuestionHistory = useCallback(async (qid:number)=>{
+    setHistoryLoading(true);
+    try{
+      const res=await fetch(`/api/history/${qid}`);
+      const data=await res.json();
+      setQuestionHistory(data.history??[]);
+    }catch(e){console.error(e);setQuestionHistory([]);}
+    setHistoryLoading(false);
+  },[]);
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
@@ -86,9 +84,9 @@ export default function Home() {
       const [hRes,qRes,lcRes] = await Promise.all([fetch('/api/history'),fetch('/api/questions'),fetch('/api/latest-causes')]);
       const hData=await hRes.json(); const qData=await qRes.json(); const lcData=await lcRes.json();
       const qMap:Record<number,QSummary>={};
-      for(const r of qData.questions??[]){qMap[r.qid]={rank:r.rank,attemptCount:r.attempt_count,correctCount:r.correct_count,lastAttempt:r.last_attempt};}
+      for(const r of qData.questions??[]){qMap[r.qid]={rank:r.rank,attemptCount:r.attempt_count,correctCount:r.correct_count,lastAttempt:r.last_attempt,easinessFactor:r.easiness_factor??2.5,intervalDays:r.interval_days??1,repetitions:r.repetitions??0,nextReviewDate:r.next_review_date?String(r.next_review_date).slice(0,10):null,consecutiveCorrect:r.consecutive_correct??0,consecutiveWrong:r.consecutive_wrong??0};}
       setQuestions(qMap);
-      setHistory((hData.history??[]).map((r:Record<string,unknown>)=>({id:r.id,qid:r.qid,timestamp:r.timestamp,isCorrect:r.is_correct,causes:r.causes,memo:r.memo,actions:r.actions,rank:r.rank})));
+      setHistory((hData.history??[]).map((r:Record<string,unknown>)=>({id:r.id,qid:r.qid,timestamp:r.timestamp,isCorrect:r.is_correct,causes:r.causes,memo:r.memo,actions:r.actions,rank:r.rank,suggestedRank:r.suggested_rank??null})));
       const lcMap:Record<number,LatestCause>={};
       for(const r of lcData.latestCauses??[]){lcMap[r.qid]={isCorrect:r.is_correct,causes:r.causes};}
       setLatestCauses(lcMap);
@@ -97,23 +95,53 @@ export default function Home() {
   },[]);
 
   useEffect(()=>{fetchAll();},[fetchAll]);
+  useEffect(()=>{
+    if(cur===null){setQuestionHistory([]);return;}
+    setHistoryExpanded(false);
+    fetchQuestionHistory(cur);
+  },[cur,fetchQuestionHistory]);
+  useEffect(()=>{setSelectedActions({});},[cur,answered,causes,sessionRank]);
+  useEffect(()=>{setRankUserModified(false);setSessionRank(null);},[cur,answered,causes]);
 
-  const sortedQ=()=>{const O={C:0,B:1,A:2};return [...QS].sort((a,b)=>(O[questions[a.id]?.rank??'C']??3)-(O[questions[b.id]?.rank??'C']??3));};
+  const sortedQ=()=>{
+    if(planSortOrder&&planSortOrder.length>0){
+      const orderMap=new Map(planSortOrder.map((id,i)=>[id,i]));
+      return [...QS].sort((a,b)=>{
+        const ia=orderMap.get(a.id);const ib=orderMap.get(b.id);
+        if(ia!==undefined&&ib!==undefined)return ia-ib;
+        if(ia!==undefined)return -1;
+        if(ib!==undefined)return 1;
+        return a.id-b.id;
+      });
+    }
+    const O={C:0,B:1,A:2};
+    return [...QS].sort((a,b)=>{const [pa,da]=reviewSortKey(a.id,questions);const [pb,db]=reviewSortKey(b.id,questions);if(pa!==pb)return pa-pb;if(da!==db)return da<db?-1:1;return (O[questions[a.id]?.rank??'C']??3)-(O[questions[b.id]?.rank??'C']??3);});
+  };
+
+  const handleStartLearning=(sortOrder:number[])=>{setPlanSortOrder(sortOrder);setShowHomeScreen(false);};
 
   const handleSave=async()=>{
     if(cur===null||answered===null)return;
     setSaving(true);
     const selCauseIds=Object.keys(causes).filter(k=>causes[k]);
-    const rank=questions[cur]?.rank??'C';
+    const qd=questions[cur]??EMPTY_Q;
+    const causeList=answered?SUCCESS_FACTORS:CAUSES;
+    const causeLabels=selCauseIds.map(id=>causeList.find(c=>c.id===id)?.label??id);
+    const prevRank=questionHistory[0]?.rank??null;
+    const rankEst=estimateRank({isCorrect:answered,causes:causeLabels,consecutiveCorrect:answered?(qd.consecutiveCorrect+1):qd.consecutiveCorrect,consecutiveWrong:answered?qd.consecutiveWrong:(qd.consecutiveWrong+1),previousRank:prevRank,totalAttempts:qd.attemptCount+1});
+    const rank=(sessionRank??rankEst.suggestedRank) as 'A'|'B'|'C';
+    const suggestion=generateSuggestion({isCorrect:answered,causes:causeLabels,rank,consecutiveWrong:answered?0:getConsecutiveWrong(history,cur),intervalDays:qd.intervalDays});
+    const savedActions=suggestion.actions.filter((_,i)=>selectedActions[i]);
     const id=`${Date.now()}_${Math.random().toString(36).slice(2,8)}`;
     const timestamp=new Date().toISOString();
     try {
       await Promise.all([
-        fetch('/api/history',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,qid:cur,timestamp,isCorrect:answered,causes:selCauseIds,memo,actions:[],rank})}),
-        fetch('/api/questions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({qid:cur,rank,attemptCount:(questions[cur]?.attemptCount??0)+1,correctCount:(questions[cur]?.correctCount??0)+(answered?1:0),lastAttempt:timestamp})}),
+        fetch('/api/history',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,qid:cur,timestamp,isCorrect:answered,causes:selCauseIds,memo,actions:savedActions,rank,suggestedRank:rankEst.suggestedRank})}),
+        fetch('/api/questions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({qid:cur,rank,attemptCount:(questions[cur]?.attemptCount??0)+1,correctCount:(questions[cur]?.correctCount??0)+(answered?1:0),lastAttempt:timestamp,isCorrect:answered})}),
         fetch('/api/latest-causes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({qid:cur,isCorrect:answered,causes:selCauseIds})}),
       ]);
       await fetchAll();
+      if(cur!==null)await fetchQuestionHistory(cur);
       setSavedMsg(true);
       setTimeout(()=>setSavedMsg(false),1500);
     } catch(e){console.error(e);alert('保存に失敗しました');}
@@ -126,31 +154,33 @@ export default function Home() {
     await fetchAll();
   };
 
-  const setRank=async(r:'A'|'B'|'C')=>{
-    if(cur===null)return;
-    const q=questions[cur]??{rank:'C',attemptCount:0,correctCount:0,lastAttempt:null};
-    await fetch('/api/questions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({qid:cur,rank:r,attemptCount:q.attemptCount,correctCount:q.correctCount,lastAttempt:q.lastAttempt})});
-    setQuestions(prev=>({...prev,[cur]:{...q,rank:r}}));
-  };
+  const setRank=(r:'A'|'B'|'C')=>{setSessionRank(r);setRankUserModified(true);};
 
-  const handleSel=(qid:number)=>{setCur(qid);setSelAns(null);setAnswered(null);setCauses({});setMemo('');setSelectedActions({});};
+  const handleSel=(qid:number)=>{setCur(qid);setSelAns(null);setAnswered(null);setCauses({});setMemo('');setSelectedActions({});setSessionRank(null);setRankUserModified(false);};
   const handleSubmit=()=>{if(cur===null||selAns===null)return;setAnswered(selAns===QS[cur].answer);};
+
+  const qdForEst=cur!==null?(questions[cur]??EMPTY_Q):null;
+  const hasCauseForEst=Object.values(causes).some(Boolean);
+  const causeListForEst=answered?SUCCESS_FACTORS:CAUSES;
+  const causeLabelsForEst=Object.keys(causes).filter(k=>causes[k]).map(id=>causeListForEst.find(c=>c.id===id)?.label??id);
+  const prevRankForEst=questionHistory[0]?.rank??null;
+  const rankEstimate=answered!==null&&hasCauseForEst&&qdForEst?estimateRank({isCorrect:answered,causes:causeLabelsForEst,consecutiveCorrect:answered?(qdForEst.consecutiveCorrect+1):qdForEst.consecutiveCorrect,consecutiveWrong:answered?qdForEst.consecutiveWrong:(qdForEst.consecutiveWrong+1),previousRank:prevRankForEst,totalAttempts:qdForEst.attemptCount+1}):null;
+  useEffect(()=>{if(rankEstimate&&!rankUserModified)setSessionRank(rankEstimate.suggestedRank);},[rankEstimate?.suggestedRank,rankEstimate?.reason,rankUserModified]);
 
   if(loading)return <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:'100vh',fontSize:14,color:'#6b7280'}}>読み込み中…</div>;
 
   const doneCount=Object.keys(questions).length;
   const q=cur!==null?QS[cur]:null;
-  const qd=cur!==null?(questions[cur]??{rank:'C',attemptCount:0,correctCount:0,lastAttempt:null}):null;
-  const rank=(qd?.rank??'C') as 'A'|'B'|'C';
-  const hasCause=Object.values(causes).some(Boolean);
-  const causeList=answered?SUCCESS_FACTORS:CAUSES;
-  const proposalMap=answered?SUCCESS_PROPOSALS:PROPOSALS;
-  const actionMap=answered?REINFORCE_ACTIONS:ACTIONS;
-  const selItems=causeList.filter(c=>causes[c.id]);
-  const primary=selItems[0];
-  const proposal=primary?(proposalMap[primary.id]?.[rank]??'').replace('{p}',q?.principle??''):'';
-  const allActions=selItems.flatMap(c=>actionMap[c.id]??[]).filter((a,i,arr)=>arr.findIndex(x=>x.txt===a.txt)===i).slice(0,4);
-  const bdgStyle=(r:'A'|'B'|'C'|undefined)=>r?{background:r==='A'?'#d1fae5':r==='B'?'#fef3c7':'#fee2e2',color:r==='A'?'#059669':r==='B'?'#d97706':'#dc2626',fontSize:9,fontWeight:700,padding:'2px 6px',borderRadius:4}:{background:'#f3f4f6',color:'#6b7280',fontSize:9,fontWeight:700,padding:'2px 6px',borderRadius:4};
+  const qd=cur!==null?(questions[cur]??EMPTY_Q):null;
+  const hasCause=hasCauseForEst;
+  const causeList=causeListForEst;
+  const causeLabels=causeLabelsForEst;
+  const rank=(sessionRank??rankEstimate?.suggestedRank??'C') as 'A'|'B'|'C';
+  const suggestion=answered!==null&&hasCause?generateSuggestion({isCorrect:answered,causes:causeLabels,rank,consecutiveWrong:answered?0:(cur!==null?getConsecutiveWrong(history,cur):0),intervalDays:qd?.intervalDays??1}):null;
+  const bdgStyle=(r:'A'|'B'|'C'|undefined):CSSProperties=>r?{background:r==='A'?'#d1fae5':r==='B'?'#fef3c7':'#fee2e2',color:r==='A'?'#059669':r==='B'?'#d97706':'#dc2626',fontSize:9,fontWeight:700,padding:'2px 6px',borderRadius:4}:{background:'#f3f4f6',color:'#6b7280',fontSize:9,fontWeight:700,padding:'2px 6px',borderRadius:4};
+  const prevRecord=questionHistory[0]??null;
+  const changeIndicator=questionHistory.length>=2?getChangeIndicator(questionHistory[1],questionHistory[0]):null;
+  const prevCauseLabels=prevRecord?causeLabelsFromIds(prevRecord.causes,prevRecord.isCorrect):(cur!==null&&latestCauses[cur]?.causes?.length?causeLabelsFromIds(latestCauses[cur].causes,latestCauses[cur].isCorrect):[]);
 
   return (
     <div style={{fontFamily:"'Noto Sans JP',sans-serif",color:'#0f1117',background:'#fff',fontSize:14,lineHeight:1.6,minHeight:'100vh'}}>
@@ -169,12 +199,16 @@ export default function Home() {
         ))}
       </div>
 
-      {tab==='learn'&&(
+      {tab==='learn'&&showHomeScreen&&(
+        <HomeScreen onStartLearning={handleStartLearning}/>
+      )}
+
+      {tab==='learn'&&!showHomeScreen&&(
         <div style={{display:'grid',gridTemplateColumns:'22% 24% 24% 30%',height:'calc(100vh - 102px)'}}>
           <div style={{borderRight:'1px solid #e5e7eb',display:'flex',flexDirection:'column',overflow:'hidden'}}>
             <div style={{padding:'8px 12px',borderBottom:'1px solid #e5e7eb',background:'#f8f9fc',flexShrink:0}}>
               <div style={{fontSize:9,fontWeight:700,color:'#2563eb',letterSpacing:'.08em'}}>PANE 1</div>
-              <div style={{fontSize:11,fontWeight:700}}>問題一覧（復習優先）</div>
+              <div style={{fontSize:11,fontWeight:700}}>問題一覧（復習優先・SM-2）</div>
               <div style={{display:'flex',alignItems:'center',gap:8,marginTop:4}}>
                 <div style={{height:4,background:'#e5e7eb',borderRadius:2,flex:1,maxWidth:160}}><div style={{height:'100%',background:'#2563eb',borderRadius:2,width:`${Math.round(doneCount/QS.length*100)}%`,transition:'width .4s'}}/></div>
                 <span style={{fontSize:11,color:'#6b7280'}}>{doneCount}/{QS.length}問</span>
@@ -191,7 +225,7 @@ export default function Home() {
                     <span style={{fontSize:11,flex:1,lineHeight:1.4}}>{trunc(q2.text,28)}</span>
                     <span style={bdgStyle(qd2?.rank)}>{qd2?.rank??'未'}</span>
                   </div>
-                  {(qd2?.lastAttempt||cs)&&<div style={{fontSize:10,color:'#6b7280',marginTop:3,paddingLeft:28}}>{[qd2?.lastAttempt?`前回 ${fmtDate(qd2.lastAttempt)}`:'',cs].filter(Boolean).join('　')}</div>}
+                  {(qd2?.lastAttempt||cs||qd2?.nextReviewDate)&&<div style={{fontSize:10,color:'#6b7280',marginTop:3,paddingLeft:28}}>{[qd2?.nextReviewDate?fmtReviewDate(qd2.nextReviewDate):'',qd2?.lastAttempt?`前回 ${fmtDate(qd2.lastAttempt)}`:'',cs].filter(Boolean).join('　')}</div>}
                 </div>);
               })}
             </div>
@@ -206,6 +240,26 @@ export default function Home() {
               {!q?<div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',height:140,color:'#6b7280',fontSize:11,textAlign:'center'}}>← 問題を選んでください</div>:(
                 <>
                   <div style={{fontSize:12,lineHeight:1.7,padding:10,background:'#f8f9fc',borderRadius:8,marginBottom:10}}>{q.text}</div>
+                  {historyLoading?<HistorySkeleton/>:questionHistory.length===0?(
+                    <div style={{background:'#eff6ff',border:'1.5px solid #bfdbfe',borderRadius:8,padding:10,marginBottom:10,fontSize:11,color:'#2563eb',fontWeight:700}}>🎉 はじめての挑戦です！</div>
+                  ):(
+                    <div style={{background:'#f8f9fc',border:'1.5px solid #e5e7eb',borderRadius:8,padding:10,marginBottom:10}}>
+                      <div style={{fontSize:11,fontWeight:700,marginBottom:6}}>📋 前回の記録（{fmtRelativeDays(prevRecord!.timestamp)}）</div>
+                      <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:4,flexWrap:'wrap',fontSize:11}}>
+                        <span>結果: {prevRecord!.isCorrect?'✅ 正解':'❌ 不正解'}</span>
+                        <span style={bdgStyle(prevRecord!.rank)}>ランク: {prevRecord!.rank}</span>
+                      </div>
+                      {causeLabelsFromIds(prevRecord!.causes,prevRecord!.isCorrect).length>0&&<div style={{fontSize:10,marginBottom:4}}>原因: {causeLabelsFromIds(prevRecord!.causes,prevRecord!.isCorrect).join('、')}</div>}
+                      {prevRecord!.memo&&<div style={{fontSize:10,color:'#6b7280',fontStyle:'italic'}}>メモ: 「{prevRecord!.memo}」</div>}
+                      {changeIndicator&&<div style={{fontSize:10,fontWeight:700,color:changeIndicator.color,marginTop:8,padding:'6px 8px',background:'#fff',borderRadius:6,border:`1px solid ${changeIndicator.color}33`}}>{changeIndicator.icon} {changeIndicator.text}</div>}
+                      {questionHistory.length>1&&(
+                        <>
+                          <div onClick={()=>setHistoryExpanded(v=>!v)} style={{fontSize:10,color:'#2563eb',cursor:'pointer',marginTop:8,fontWeight:700}}>{historyExpanded?'▲ 折りたたむ':`▼ 2回前・3回前を見る（${questionHistory.length-1}件）`}</div>
+                          {historyExpanded&&questionHistory.slice(1).map((h,i)=><PrevRecordCard key={h.timestamp} record={h} bdgStyle={bdgStyle} title={`${i+2}回前（${fmtRelativeDays(h.timestamp)}）`}/>)}
+                        </>
+                      )}
+                    </div>
+                  )}
                   {q.type==='ox'?(
                     <div style={{display:'flex',gap:6,marginBottom:8}}>
                       {([true,false] as const).map(v=>{
@@ -244,6 +298,13 @@ export default function Home() {
             <div style={{flex:1,overflowY:'auto',padding:8}}>
               {answered===null?<div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',height:140,color:'#6b7280',fontSize:11,textAlign:'center'}}><span style={{fontSize:22,opacity:.4}}>🔒</span>解答後に入力できます</div>:(
                 <>
+                  {prevCauseLabels.length>0&&(
+                    <div style={{background:'#f8f9fc',borderRadius:8,padding:'7px 9px',marginBottom:8,border:'1px solid #e5e7eb'}}>
+                      <div style={{fontSize:10,color:'#374151',fontWeight:600,marginBottom:4}}>
+                        前回: {prevCauseLabels.map((label,i)=><span key={label}>{i>0?' / ':''}<span style={{fontWeight:700,color:prevRecord?.isCorrect?'#059669':'#dc2626'}}>{label}</span></span>)}
+                      </div>
+                    </div>
+                  )}
                   <div style={{fontSize:9,color:'#6b7280',fontWeight:700,letterSpacing:'.08em',margin:'8px 0 4px'}}>{answered?'正解できた要因（複数可）':'間違えた原因（複数可）'}</div>
                   {causeList.map(c=>(
                     <div key={c.id} onClick={()=>setCauses(prev=>({...prev,[c.id]:!prev[c.id]}))} style={{display:'flex',alignItems:'center',gap:8,padding:'7px 9px',border:`1.5px solid ${causes[c.id]?(answered?'#059669':'#dc2626'):'#e5e7eb'}`,borderRadius:8,marginBottom:5,cursor:'pointer',background:causes[c.id]?(answered?'#d1fae5':'#fee2e2'):'#fff'}}>
@@ -253,14 +314,6 @@ export default function Home() {
                   ))}
                   <div style={{fontSize:9,color:'#6b7280',fontWeight:700,letterSpacing:'.08em',margin:'8px 0 4px'}}>メモ（任意）</div>
                   <textarea value={memo} onChange={e=>setMemo(e.target.value)} rows={2} placeholder="気づきをメモ…" style={{width:'100%',border:'1.5px solid #e5e7eb',borderRadius:8,padding:7,fontSize:11,fontFamily:'inherit',color:'#0f1117',background:'#fff',resize:'none'}}/>
-                  {history.filter(h=>h.qid===cur).slice(-3).reverse().map(h=>{
-                    const rl=h.isCorrect?SUCCESS_FACTORS:CAUSES;
-                    const cl=h.causes.map(c=>rl.find(x=>x.id===c)?.label).join('・')||'-';
-                    return <div key={h.id} style={{background:'#f8f9fc',borderRadius:7,padding:'7px 9px',marginBottom:4,fontSize:10}}>
-                      <div style={{color:'#6b7280',marginBottom:2}}>{fmtDateFull(h.timestamp)} <span style={bdgStyle(h.rank)}>{h.rank}</span> {h.isCorrect?'✓ 正解':'✗ 不正解'}</div>
-                      {cl}{h.memo&&<div style={{color:'#6b7280',marginTop:2,fontStyle:'italic'}}>{h.memo}</div>}
-                    </div>;
-                  })}
                 </>
               )}
             </div>
@@ -276,26 +329,39 @@ export default function Home() {
                 <>
                   <div style={{background:answered?'#d1fae5':'#eff6ff',border:`1.5px solid ${answered?'#a7f3d0':'#bfdbfe'}`,borderRadius:10,padding:10,marginBottom:8}}>
                     <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:6}}>
-                      <div style={{width:22,height:22,background:answered?'#059669':'#2563eb',borderRadius:5,display:'flex',alignItems:'center',justifyContent:'center',fontSize:11,color:'#fff',fontWeight:700}}>AI</div>
+                      <div style={{width:22,height:22,background:answered?'#059669':'#2563eb',borderRadius:5,display:'flex',alignItems:'center',justifyContent:'center',fontSize:9,color:'#fff',fontWeight:700}}>提案</div>
                       <span style={{fontSize:11,fontWeight:700,color:answered?'#059669':'#2563eb'}}>{answered?'次回への再現プラン':'改善提案'}</span>
                     </div>
-                    <div style={{fontSize:11,lineHeight:1.6}}>{proposal}</div>
+                    <div style={{fontSize:11,lineHeight:1.6}}>{suggestion?.message}</div>
+                    {suggestion?.nextFocus&&<div style={{fontSize:10,fontWeight:700,color:answered?'#059669':'#2563eb',marginTop:6}}>→ {suggestion.nextFocus}</div>}
                   </div>
                   <div style={{fontSize:9,color:'#6b7280',fontWeight:700,letterSpacing:'.08em',margin:'8px 0 4px'}}>{answered?'継続するアクション':'実行するアクション'}</div>
-                  {allActions.map((a,i)=>(
+                  {suggestion?.actions.map((action,i)=>(
                     <div key={i} onClick={()=>setSelectedActions(prev=>({...prev,[i]:!prev[i]}))} style={{display:'flex',alignItems:'flex-start',gap:7,padding:'7px 9px',border:`1.5px solid ${selectedActions[i]?'#2563eb':'#e5e7eb'}`,borderRadius:8,marginBottom:5,cursor:'pointer',background:selectedActions[i]?'#eff6ff':'#fff'}}>
                       <div style={{width:14,height:14,border:`1.5px solid ${selectedActions[i]?'#2563eb':'#e5e7eb'}`,borderRadius:3,flexShrink:0,marginTop:1,display:'flex',alignItems:'center',justifyContent:'center',fontSize:9,fontWeight:700,background:selectedActions[i]?'#2563eb':'#fff',color:'#fff'}}>{selectedActions[i]?'✓':''}</div>
-                      <div style={{fontSize:11}}>{a.txt}<div style={{fontSize:9,color:'#6b7280',marginTop:2}}>いつ：{a.when}</div></div>
+                      <div style={{fontSize:11}}>{action}</div>
                     </div>
                   ))}
-                  <div style={{fontSize:9,color:'#6b7280',fontWeight:700,letterSpacing:'.08em',margin:'8px 0 4px'}}>この問題の理解度</div>
+                  <div style={{fontSize:9,color:'#6b7280',fontWeight:700,letterSpacing:'.08em',margin:'8px 0 4px'}}>理解度を設定</div>
                   <div style={{display:'flex',gap:6,marginBottom:6}}>
-                    {(['C','B','A'] as const).map(r=>(
-                      <button key={r} onClick={()=>setRank(r)} style={{flex:1,padding:6,borderRadius:7,border:`1.5px solid ${rank===r?'#2563eb':'#e5e7eb'}`,background:rank===r?'#eff6ff':'#fff',color:rank===r?'#2563eb':'#0f1117',fontSize:12,fontWeight:700,cursor:'pointer',fontFamily:'inherit'}}>
-                        {r==='C'?'C 要復習':r==='B'?'B 復習推奨':'A 理解済'}
-                      </button>
-                    ))}
+                    {(['C','B','A'] as const).map(r=>{
+                      const isSelected=rank===r;
+                      const isSuggested=rankEstimate?.suggestedRank===r;
+                      const labels={C:'C 要復習',B:'B 復習推奨',A:'A 理解済'} as const;
+                      return(
+                        <button key={r} onClick={()=>setRank(r)} style={{flex:1,padding:6,borderRadius:7,border:`1.5px solid ${isSelected?'#2563eb':isSuggested?'#fbbf24':'#e5e7eb'}`,background:isSelected?'#eff6ff':isSuggested?'#fffbeb':'#fff',color:isSelected?'#2563eb':'#0f1117',fontSize:11,fontWeight:700,cursor:'pointer',fontFamily:'inherit',position:'relative'}}>
+                          {isSuggested&&'⭐ '}{labels[r]}
+                          {isSuggested&&isSelected&&<div style={{fontSize:8,color:'#d97706',fontWeight:700,marginTop:2}}>おすすめ</div>}
+                        </button>
+                      );
+                    })}
                   </div>
+                  {rankEstimate&&(
+                    <div style={{background:'#fffbeb',border:'1px solid #fde68a',borderRadius:8,padding:'8px 10px',marginBottom:6,fontSize:10,lineHeight:1.5}}>
+                      <div style={{fontWeight:700,color:'#92400e',marginBottom:2}}>💡 今回は{rankEstimate.suggestedRank}がおすすめです</div>
+                      <div style={{color:'#78350f'}}>{rankEstimate.reason}</div>
+                    </div>
+                  )}
                   <button onClick={handleSave} disabled={saving||savedMsg} style={{width:'100%',padding:9,borderRadius:8,background:savedMsg?'#059669':saving?'#e5e7eb':'#059669',color:saving?'#6b7280':'#fff',border:'none',fontSize:11,fontWeight:700,cursor:saving?'not-allowed':'pointer',fontFamily:'inherit',marginTop:8}}>
                     {savedMsg?'✓ 保存しました':saving?'保存中…':'💾 記録を保存する'}
                   </button>
@@ -341,7 +407,7 @@ export default function Home() {
           <div style={{fontSize:20,fontWeight:900,marginBottom:4}}>統計ダッシュボード</div>
           <div style={{fontSize:13,color:'#6b7280',marginBottom:20}}>蓄積データから見えてきた学習傾向</div>
           <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:12,marginBottom:24}}>
-            {[{num:history.length,label:'総解答数',color:'#0f1117'},{num:`${history.length?Math.round(history.filter(h=>h.isCorrect).length/history.length*100):0}%`,label:'正答率',color:'#2563eb'},{num:Object.values(questions).filter(q=>q.rank==='A').length,label:'A理解済',color:'#059669'},{num:doneCount,label:'挑戦済み問題数',color:'#d97706'}].map(({num,label,color})=>(
+            {[{num:history.length,label:'総解答数',color:'#0f1117'},{num:`${history.length?Math.round(history.filter(h=>h.isCorrect).length/history.length*100):0}%`,label:'正答率',color:'#2563eb'},{num:Object.values(questions).filter(q=>q.nextReviewDate&&q.nextReviewDate<=todayStr()).length,label:'今日の復習',color:'#dc2626'},{num:Object.values(questions).filter(q=>q.rank==='A').length,label:'A理解済',color:'#059669'}].map(({num,label,color})=>(
               <div key={label} style={{border:'1.5px solid #e5e7eb',borderRadius:12,padding:16}}>
                 <div style={{fontSize:28,fontWeight:900,marginBottom:2,color}}>{num}</div>
                 <div style={{fontSize:11,color:'#6b7280'}}>{label}</div>
