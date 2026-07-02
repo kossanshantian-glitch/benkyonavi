@@ -72,6 +72,7 @@ export default function Home() {
   const [accuracyTrend, setAccuracyTrend] = useState<{date:string;correct:number;total:number;rate:number}[]>([]);
   const [accuracyInsights, setAccuracyInsights] = useState<string[]>([]);
   const [causeDistribution, setCauseDistribution] = useState<CauseDistributionItem[]>([]);
+  const [causeError, setCauseError] = useState(false);
   const [selectedPeriod, setSelectedPeriod] = useState<'7d'|'30d'|'all'>('7d');
   const [statsLoading, setStatsLoading] = useState(false);
   const [causeLoading, setCauseLoading] = useState(false);
@@ -203,14 +204,22 @@ export default function Home() {
 
   const fetchCauseDistribution = useCallback(async (period:'7d'|'30d'|'all')=>{
     setCauseLoading(true);
+    setCauseError(false);
     try {
       const params = new URLSearchParams();
       if (period !== 'all') params.set('period', period);
       const res = await fetch(`/api/stats/cause-distribution?${params.toString()}`);
       const data = await res.json();
-      setCauseDistribution(data ?? []);
+      if (!res.ok || !Array.isArray(data)) {
+        console.error('cause-distribution fetch failed', data);
+        setCauseError(true);
+        setCauseDistribution([]);
+      } else {
+        setCauseDistribution(data);
+      }
     } catch (error) {
       console.error(error);
+      setCauseError(true);
       setCauseDistribution([]);
     }
     setCauseLoading(false);
@@ -588,6 +597,8 @@ export default function Home() {
             <div style={{minHeight: 220, display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
               {causeLoading ? (
                 <div style={{color: '#6b7280'}}>読み込み中…</div>
+              ) : causeError ? (
+                <div style={{color: '#dc2626'}}>データを取得できませんでした。</div>
               ) : causeDistribution.length === 0 ? (
                 <div style={{color: '#6b7280'}}>該当するデータがありません。</div>
               ) : (

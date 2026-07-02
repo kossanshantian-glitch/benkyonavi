@@ -24,14 +24,14 @@ export async function GET(req: Request) {
     const rows = limit
       ? await db`
           SELECT cause, COUNT(*) AS count
-          FROM history, jsonb_array_elements_text(coalesce(causes, '[]'::jsonb)) AS cause
+          FROM history, unnest(coalesce(causes, ARRAY[]::text[])) AS cause
           WHERE NOT is_correct AND timestamp >= ${since}
           GROUP BY cause
           ORDER BY count DESC
         `
       : await db`
           SELECT cause, COUNT(*) AS count
-          FROM history, jsonb_array_elements_text(coalesce(causes, '[]'::jsonb)) AS cause
+          FROM history, unnest(coalesce(causes, ARRAY[]::text[])) AS cause
           WHERE NOT is_correct
           GROUP BY cause
           ORDER BY count DESC
