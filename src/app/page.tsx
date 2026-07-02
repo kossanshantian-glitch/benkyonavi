@@ -2,6 +2,7 @@
 import { useEffect, useState, useCallback, type CSSProperties } from 'react';
 import { generateSuggestion } from '@/lib/suggestion-engine';
 import { estimateRank } from '@/lib/rank-estimator';
+import { generateAccuracyInsights, type AccuracyTrendPoint } from '@/lib/insightEngine';
 import HomeScreen from '@/components/HomeScreen';
 
 const QS = [
@@ -69,6 +70,7 @@ export default function Home() {
   const [showHomeScreen, setShowHomeScreen] = useState(true);
   const [planSortOrder, setPlanSortOrder] = useState<number[]|null>(null);
   const [accuracyTrend, setAccuracyTrend] = useState<{date:string;correct:number;total:number;rate:number}[]>([]);
+  const [accuracyInsights, setAccuracyInsights] = useState<string[]>([]);
   const [causeDistribution, setCauseDistribution] = useState<CauseDistributionItem[]>([]);
   const [selectedPeriod, setSelectedPeriod] = useState<'7d'|'30d'|'all'>('7d');
   const [statsLoading, setStatsLoading] = useState(false);
@@ -222,6 +224,10 @@ export default function Home() {
       fetchCauseDistribution(selectedPeriod);
     }
   }, [tab, selectedPeriod, aggregateAccuracyTrend, fetchCauseDistribution, history]);
+
+  useEffect(() => {
+    setAccuracyInsights(generateAccuracyInsights(accuracyTrend));
+  }, [accuracyTrend]);
 
   if(loading)return <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:'100vh',fontSize:14,color:'#6b7280'}}>読み込み中…</div>;
 
@@ -505,15 +511,53 @@ export default function Home() {
                 <div style={{color: '#6b7280'}}>データがありません。</div>
               ) : (
                 <div style={{width: '100%', overflowX: 'auto'}}>
-                  <div style={{display: 'grid', gridTemplateColumns: `repeat(${accuracyTrend.length}, minmax(48px, 1fr))`, gap: 8, alignItems: 'end', height: 180}}>
-                    {accuracyTrend.map((item) => (
-                      <div key={item.date} style={{display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6}}>
-                        <div style={{width: '100%', background: '#f3f4f6', borderRadius: 8, height: '100%', display: 'flex', alignItems: 'flex-end'}}>
-                          <div style={{width: '100%', background: '#2563eb', borderRadius: 8, minHeight: 4, height: `${Math.round(item.rate * 100)}%`}} />
-                        </div>
-                        <div style={{fontSize: 10, color: '#6b7280', textAlign: 'center', wordBreak: 'break-word'}}>{item.date.slice(5)}</div>
-                      </div>
-                    ))}
+                  <div style={{position:'relative',width:'100%',minHeight:220,padding:'12px 0'}}>
+                    <svg viewBox="0 0 1000 240" preserveAspectRatio="none" style={{width:'100%',height:240}}>
+                      <defs>
+                        <linearGradient id="trendGradient" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#2563eb" stopOpacity="0.24" />
+                          <stop offset="100%" stopColor="#2563eb" stopOpacity="0" />
+                        </linearGradient>
+                      </defs>
+                      {[0,25,50,75,100].map((percent) => (
+                        <g key={percent}>
+                          <line x1="0" y1={`${220 - percent * 2.2}`} x2="1000" y2={`${220 - percent * 2.2}`} stroke="#e5e7eb" strokeDasharray="4 4" />
+                          <text x="4" y={`${220 - percent * 2.2 - 6}`} fill="#6b7280" fontSize="12">{percent}%</text>
+                        </g>
+                      ))}
+                      {(() => {
+                        const points = accuracyTrend.map((item, index) => {
+                          const x = (index / Math.max(accuracyTrend.length - 1, 1)) * 960 + 20;
+                          const y = 220 - item.rate * 2.2;
+                          return { ...item, x, y };
+                        });
+                        const path = points.map((p, index) => `${index === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
+                        const average = accuracyTrend.reduce((sum, item) => sum + item.rate, 0) / accuracyTrend.length;
+                        const avgY = 220 - average * 2.2;
+                        return (
+                          <>
+                            <path d={`${path}`} fill="none" stroke="#2563eb" strokeWidth="3" />
+                            <path d={`${path} L ${points[points.length - 1].x} 220 L ${points[0].x} 220 Z`} fill="url(#trendGradient)" opacity="0.4" />
+                            <line x1="20" y1={`${avgY}`} x2="980" y2={`${avgY}`} stroke="#d97706" strokeDasharray="8 6" strokeWidth="2" />
+                            <text x="984" y={`${avgY - 6}`} fill="#d97706" fontSize="12" textAnchor="end">平均 {Math.round(average * 100)}%</text>
+                            {points.map((point, index) => {
+                              const radius = Math.min(10, 4 + Math.min(point.total, 5));
+                              const opacity = point.total <= 1 ? 0.4 : point.total <= 2 ? 0.6 : 1;
+                              const showLabel = accuracyTrend.length <= 7 || index === 0 || index === points.length - 1 || point.total <= 1 || point.rate === Math.max(...accuracyTrend.map((p) => p.rate));
+                              return (
+                                <g key={point.date}>
+                                  <circle cx={point.x} cy={point.y} r={radius} fill="#2563eb" opacity={opacity} />
+                                  {showLabel && (
+                                    <text x={point.x} y={point.y - radius - 8} fill="#0f172a" fontSize="12" fontWeight="700" textAnchor="middle">{Math.round(point.rate * 100)}%</text>
+                                  )}
+                                  <text x={point.x} y="236" fill="#6b7280" fontSize="10" textAnchor="middle">{point.date.slice(5)}</text>
+                                </g>
+                              );
+                            })}
+                          </>
+                        );
+                      })()}
+                    </svg>
                   </div>
                 </div>
               )}
