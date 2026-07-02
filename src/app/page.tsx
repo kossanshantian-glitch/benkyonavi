@@ -67,6 +67,9 @@ export default function Home() {
   const [rankUserModified, setRankUserModified] = useState(false);
   const [showHomeScreen, setShowHomeScreen] = useState(true);
   const [planSortOrder, setPlanSortOrder] = useState<number[]|null>(null);
+  const [accuracyTrend, setAccuracyTrend] = useState<{date:string;correct:number;total:number;rate:number}[]>([]);
+  const [selectedPeriod, setSelectedPeriod] = useState<'7d'|'30d'|'all'>('7d');
+  const [statsLoading, setStatsLoading] = useState(false);
 
   const fetchQuestionHistory = useCallback(async (qid:number)=>{
     setHistoryLoading(true);
@@ -166,6 +169,27 @@ export default function Home() {
   const prevRankForEst=questionHistory[0]?.rank??null;
   const rankEstimate=answered!==null&&hasCauseForEst&&qdForEst?estimateRank({isCorrect:answered,causes:causeLabelsForEst,consecutiveCorrect:answered?(qdForEst.consecutiveCorrect+1):qdForEst.consecutiveCorrect,consecutiveWrong:answered?qdForEst.consecutiveWrong:(qdForEst.consecutiveWrong+1),previousRank:prevRankForEst,totalAttempts:qdForEst.attemptCount+1}):null;
   useEffect(()=>{if(rankEstimate&&!rankUserModified)setSessionRank(rankEstimate.suggestedRank);},[rankEstimate?.suggestedRank,rankEstimate?.reason,rankUserModified]);
+
+  const fetchAccuracyTrend = useCallback(async (period:'7d'|'30d'|'all')=>{
+    setStatsLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (period !== 'all') params.set('period', period);
+      const res = await fetch(`/api/stats/accuracy-trend?${params.toString()}`);
+      const data = await res.json();
+      setAccuracyTrend(data ?? []);
+    } catch (error) {
+      console.error(error);
+      setAccuracyTrend([]);
+    }
+    setStatsLoading(false);
+  }, []);
+
+  useEffect(()=>{
+    if (tab === 'stats') {
+      fetchAccuracyTrend(selectedPeriod);
+    }
+  }, [tab, selectedPeriod, fetchAccuracyTrend]);
 
   if(loading)return <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:'100vh',fontSize:14,color:'#6b7280'}}>読み込み中…</div>;
 
@@ -413,6 +437,69 @@ export default function Home() {
                 <div style={{fontSize:11,color:'#6b7280'}}>{label}</div>
               </div>
             ))}
+          </div>
+          <div style={{border:'1.5px solid #e5e7eb',borderRadius:12,padding:20,marginBottom:24}}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
+              <div>
+                <div style={{fontSize:13,fontWeight:700}}>正答率の推移</div>
+                <div style={{fontSize:11,color:'#6b7280'}}>期間を切り替えて、日別/週別の傾向を確認できます。</div>
+              </div>
+              <div style={{display:'flex',gap:8}}>
+                {(['7d','30d','all'] as const).map((period)=> (
+                  <button
+                    key={period}
+                    type="button"
+                    onClick={() => setSelectedPeriod(period)}
+                    style={{
+                      padding: '8px 12px',
+                      borderRadius: 8,
+                      border: `1px solid ${selectedPeriod === period ? '#2563eb' : '#e5e7eb'}`,
+                      background: selectedPeriod === period ? '#eff6ff' : '#fff',
+                      color: selectedPeriod === period ? '#2563eb' : '#6b7280',
+                      cursor: 'pointer',
+                      fontSize: 12,
+                      fontWeight: 700,
+                    }}
+                  >
+                    {period === '7d' ? '直近7日' : period === '30d' ? '直近30日' : '全期間'}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div style={{minHeight: 220, display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
+              {statsLoading ? (
+                <div style={{color: '#6b7280'}}>読み込み中…</div>
+              ) : accuracyTrend.length === 0 ? (
+                <div style={{color: '#6b7280'}}>データがありません。</div>
+              ) : (
+                <div style={{width: '100%', overflowX: 'auto'}}>
+                  <div style={{display: 'grid', gridTemplateColumns: `repeat(${accuracyTrend.length}, minmax(48px, 1fr))`, gap: 8, alignItems: 'end', height: 180}}>
+                    {accuracyTrend.map((item) => (
+                      <div key={item.date} style={{display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6}}>
+                        <div style={{width: '100%', background: '#f3f4f6', borderRadius: 8, height: '100%', display: 'flex', alignItems: 'flex-end'}}>
+                          <div style={{width: '100%', background: '#2563eb', borderRadius: 8, minHeight: 4, height: `${Math.round(item.rate * 100)}%`}} />
+                        </div>
+                        <div style={{fontSize: 10, color: '#6b7280', textAlign: 'center', wordBreak: 'break-word'}}>{item.date.slice(5)}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+            <div style={{display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginTop: 16}}>
+              <div style={{padding: 12, border: '1px solid #e5e7eb', borderRadius: 10}}>
+                <div style={{fontSize: 11, color: '#6b7280', marginBottom: 6}}>最新正答率</div>
+                <div style={{fontSize: 18, fontWeight: 700}}>{accuracyTrend.length ? `${Math.round(accuracyTrend[accuracyTrend.length-1].rate * 100)}%` : '-'}</div>
+              </div>
+              <div style={{padding: 12, border: '1px solid #e5e7eb', borderRadius: 10}}>
+                <div style={{fontSize: 11, color: '#6b7280', marginBottom: 6}}>合計解答数</div>
+                <div style={{fontSize: 18, fontWeight: 700}}>{accuracyTrend.reduce((sum, item) => sum + item.total, 0)}</div>
+              </div>
+              <div style={{padding: 12, border: '1px solid #e5e7eb', borderRadius: 10}}>
+                <div style={{fontSize: 11, color: '#6b7280', marginBottom: 6}}>平均正答率</div>
+                <div style={{fontSize: 18, fontWeight: 700}}>{accuracyTrend.length ? `${Math.round((accuracyTrend.reduce((sum, item) => sum + item.rate, 0) / accuracyTrend.length) * 100)}%` : '-'}</div>
+              </div>
+            </div>
           </div>
           <div style={{border:'1.5px solid #e5e7eb',borderRadius:12,padding:20}}>
             <div style={{fontSize:13,fontWeight:700,marginBottom:14}}>問題別 正答率</div>
