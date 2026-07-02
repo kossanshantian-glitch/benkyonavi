@@ -33,6 +33,7 @@ interface QSummary{rank:'A'|'B'|'C';attemptCount:number;correctCount:number;last
 interface HistRecord{id:string;qid:number;timestamp:string;isCorrect:boolean;causes:string[];memo:string;actions:string[];rank:'A'|'B'|'C';suggestedRank?:'A'|'B'|'C'|null;}
 interface QuestionHistory{timestamp:string;isCorrect:boolean;causes:string[];memo:string;rank:'A'|'B'|'C';actions:string[];}
 interface LatestCause{isCorrect:boolean;causes:string[];}
+interface CauseDistributionItem { cause: string; count: number; }
 function trunc(s:string,n:number){return s.length>n?s.slice(0,n)+'…':s;}
 function fmtDate(iso:string|null){if(!iso)return '-';const d=new Date(iso);return `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;}
 function fmtDateFull(iso:string){const d=new Date(iso);return `${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;}
@@ -68,8 +69,10 @@ export default function Home() {
   const [showHomeScreen, setShowHomeScreen] = useState(true);
   const [planSortOrder, setPlanSortOrder] = useState<number[]|null>(null);
   const [accuracyTrend, setAccuracyTrend] = useState<{date:string;correct:number;total:number;rate:number}[]>([]);
+  const [causeDistribution, setCauseDistribution] = useState<CauseDistributionItem[]>([]);
   const [selectedPeriod, setSelectedPeriod] = useState<'7d'|'30d'|'all'>('7d');
   const [statsLoading, setStatsLoading] = useState(false);
+  const [causeLoading, setCauseLoading] = useState(false);
 
   const fetchQuestionHistory = useCallback(async (qid:number)=>{
     setHistoryLoading(true);
@@ -170,26 +173,55 @@ export default function Home() {
   const rankEstimate=answered!==null&&hasCauseForEst&&qdForEst?estimateRank({isCorrect:answered,causes:causeLabelsForEst,consecutiveCorrect:answered?(qdForEst.consecutiveCorrect+1):qdForEst.consecutiveCorrect,consecutiveWrong:answered?qdForEst.consecutiveWrong:(qdForEst.consecutiveWrong+1),previousRank:prevRankForEst,totalAttempts:qdForEst.attemptCount+1}):null;
   useEffect(()=>{if(rankEstimate&&!rankUserModified)setSessionRank(rankEstimate.suggestedRank);},[rankEstimate?.suggestedRank,rankEstimate?.reason,rankUserModified]);
 
-  const fetchAccuracyTrend = useCallback(async (period:'7d'|'30d'|'all')=>{
-    setStatsLoading(true);
+  const aggregateAccuracyTrend = useCallback((historyRecords: HistRecord[], period:'7d'|'30d'|'all') => {
+    const buckets = historyRecords.reduce((map, record) => {
+      const dateKey = new Date(record.timestamp).toISOString().slice(0, 10);
+      const existing = map.get(dateKey) ?? { date: dateKey, correct: 0, total: 0 };
+      existing.total += 1;
+      if (record.isCorrect) existing.correct += 1;
+      map.set(dateKey, existing);
+      return map;
+    }, new Map<string, { date: string; correct: number; total: number }>());
+
+    const rows = Array.from(buckets.values())
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .map((item) => ({
+        date: item.date,
+        correct: item.correct,
+        total: item.total,
+        rate: item.total === 0 ? 0 : item.correct / item.total,
+      }));
+
+    if (period === 'all') return rows;
+
+    const limitDays = period === '7d' ? 7 : 30;
+    const cutoff = new Date(Date.now() - limitDays * 24 * 60 * 60 * 1000);
+    return rows.filter((item) => new Date(`${item.date}T00:00:00`).getTime() >= cutoff.getTime());
+  }, []);
+
+  const fetchCauseDistribution = useCallback(async (period:'7d'|'30d'|'all')=>{
+    setCauseLoading(true);
     try {
       const params = new URLSearchParams();
       if (period !== 'all') params.set('period', period);
-      const res = await fetch(`/api/stats/accuracy-trend?${params.toString()}`);
+      const res = await fetch(`/api/stats/cause-distribution?${params.toString()}`);
       const data = await res.json();
-      setAccuracyTrend(data ?? []);
+      setCauseDistribution(data ?? []);
     } catch (error) {
       console.error(error);
-      setAccuracyTrend([]);
+      setCauseDistribution([]);
     }
-    setStatsLoading(false);
+    setCauseLoading(false);
   }, []);
 
   useEffect(()=>{
     if (tab === 'stats') {
-      fetchAccuracyTrend(selectedPeriod);
+      setStatsLoading(true);
+      setAccuracyTrend(aggregateAccuracyTrend(history, selectedPeriod));
+      setStatsLoading(false);
+      fetchCauseDistribution(selectedPeriod);
     }
-  }, [tab, selectedPeriod, fetchAccuracyTrend]);
+  }, [tab, selectedPeriod, aggregateAccuracyTrend, fetchCauseDistribution, history]);
 
   if(loading)return <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:'100vh',fontSize:14,color:'#6b7280'}}>読み込み中…</div>;
 
@@ -501,6 +533,41 @@ export default function Home() {
               </div>
             </div>
           </div>
+
+          <div style={{border:'1.5px solid #e5e7eb',borderRadius:12,padding:20,marginBottom:24}}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
+              <div>
+                <div style={{fontSize:13,fontWeight:700}}>誤答原因の分布</div>
+                <div style={{fontSize:11,color:'#6b7280'}}>不正解時に選択された原因を集計し、発生頻度を表示します。</div>
+              </div>
+            </div>
+            <div style={{minHeight: 220, display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
+              {causeLoading ? (
+                <div style={{color: '#6b7280'}}>読み込み中…</div>
+              ) : causeDistribution.length === 0 ? (
+                <div style={{color: '#6b7280'}}>該当するデータがありません。</div>
+              ) : (
+                <div style={{width: '100%', overflowX: 'auto'}}>
+                  <div style={{display: 'grid', gridTemplateColumns: `repeat(${causeDistribution.length}, minmax(120px, 1fr))`, gap: 12, alignItems: 'end', height: 180}}>
+                    {causeDistribution.map((item) => {
+                      const maxCount = Math.max(...causeDistribution.map((x) => x.count));
+                      const heightPercent = maxCount > 0 ? Math.round((item.count / maxCount) * 100) : 0;
+                      return (
+                        <div key={item.cause} style={{display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8}}>
+                          <div style={{width: '100%', background: '#f3f4f6', borderRadius: 8, height: '100%', display: 'flex', alignItems: 'flex-end'}}>
+                            <div style={{width: '100%', background: '#dc2626', borderRadius: 8, minHeight: 4, height: `${heightPercent}%`}} />
+                          </div>
+                          <div style={{fontSize: 11, fontWeight: 700, color: '#0f1117', textAlign: 'center', wordBreak: 'break-word'}}>{item.cause}</div>
+                          <div style={{fontSize: 10, color: '#6b7280'}}>{item.count}件</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
           <div style={{border:'1.5px solid #e5e7eb',borderRadius:12,padding:20}}>
             <div style={{fontSize:13,fontWeight:700,marginBottom:14}}>問題別 正答率</div>
             {QS.map(q2=>{
