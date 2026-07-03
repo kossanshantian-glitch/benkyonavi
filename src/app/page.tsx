@@ -4,6 +4,8 @@ import { generateSuggestion } from '@/lib/suggestion-engine';
 import { estimateRank } from '@/lib/rank-estimator';
 import { generateAccuracyInsights, type AccuracyTrendPoint } from '@/lib/insightEngine';
 import { getCauseMeta, getCauseOptions } from '@/lib/causeLabels';
+import { getCategoryMeta, getCategoryOptions } from '@/lib/categoryLabels';
+import { getDifficultyMeta, getDifficultyOptions } from '@/lib/difficultyLabels';
 import HomeScreen from '@/components/HomeScreen';
 
 const QS = [
@@ -18,7 +20,9 @@ const QS = [
 
 const CAUSES = getCauseOptions(false);
 const SUCCESS_FACTORS = getCauseOptions(true);
-interface QSummary{rank:'A'|'B'|'C';attemptCount:number;correctCount:number;lastAttempt:string|null;easinessFactor:number;intervalDays:number;repetitions:number;nextReviewDate:string|null;consecutiveCorrect:number;consecutiveWrong:number;}
+const CATEGORY_OPTIONS = getCategoryOptions();
+const DIFFICULTY_OPTIONS = getDifficultyOptions();
+interface QSummary{rank:'A'|'B'|'C';category?:string;difficulty?:string;attemptCount:number;correctCount:number;lastAttempt:string|null;easinessFactor:number;intervalDays:number;repetitions:number;nextReviewDate:string|null;consecutiveCorrect:number;consecutiveWrong:number;}
 interface HistRecord{id:string;qid:number;timestamp:string;isCorrect:boolean;causes:string[];memo:string;actions:string[];rank:'A'|'B'|'C';suggestedRank?:'A'|'B'|'C'|null;}
 interface QuestionHistory{timestamp:string;isCorrect:boolean;causes:string[];memo:string;rank:'A'|'B'|'C';actions:string[];}
 interface LatestCause{isCorrect:boolean;causes:string[];}
@@ -64,6 +68,8 @@ export default function Home() {
   const [selectedPeriod, setSelectedPeriod] = useState<'7d'|'30d'|'all'>('7d');
   const [statsLoading, setStatsLoading] = useState(false);
   const [causeLoading, setCauseLoading] = useState(false);
+  const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
+  const [difficultyFilter, setDifficultyFilter] = useState<string | null>(null);
 
   const fetchQuestionHistory = useCallback(async (qid:number)=>{
     setHistoryLoading(true);
@@ -81,7 +87,7 @@ export default function Home() {
       const [hRes,qRes,lcRes] = await Promise.all([fetch('/api/history'),fetch('/api/questions'),fetch('/api/latest-causes')]);
       const hData=await hRes.json(); const qData=await qRes.json(); const lcData=await lcRes.json();
       const qMap:Record<number,QSummary>={};
-      for(const r of qData.questions??[]){qMap[r.qid]={rank:r.rank,attemptCount:r.attempt_count,correctCount:r.correct_count,lastAttempt:r.last_attempt,easinessFactor:r.easiness_factor??2.5,intervalDays:r.interval_days??1,repetitions:r.repetitions??0,nextReviewDate:r.next_review_date?String(r.next_review_date).slice(0,10):null,consecutiveCorrect:r.consecutive_correct??0,consecutiveWrong:r.consecutive_wrong??0};}
+      for(const r of qData.questions??[]){qMap[r.qid]={rank:r.rank,category:r.category ?? undefined,difficulty:r.difficulty ?? undefined,attemptCount:r.attempt_count,correctCount:r.correct_count,lastAttempt:r.last_attempt,easinessFactor:r.easiness_factor??2.5,intervalDays:r.interval_days??1,repetitions:r.repetitions??0,nextReviewDate:r.next_review_date?String(r.next_review_date).slice(0,10):null,consecutiveCorrect:r.consecutive_correct??0,consecutiveWrong:r.consecutive_wrong??0};}
       setQuestions(qMap);
       setHistory((hData.history??[]).map((r:Record<string,unknown>)=>({id:r.id,qid:r.qid,timestamp:r.timestamp,isCorrect:r.is_correct,causes:r.causes,memo:r.memo,actions:r.actions,rank:r.rank,suggestedRank:r.suggested_rank??null})));
       const lcMap:Record<number,LatestCause>={};
@@ -231,6 +237,12 @@ export default function Home() {
   const doneCount=Object.keys(questions).length;
   const q=cur!==null?QS[cur]:null;
   const qd=cur!==null?(questions[cur]??EMPTY_Q):null;
+  const filteredQs = sortedQ().filter((q)=>{
+    const qd2 = questions[q.id];
+    if (categoryFilter && qd2?.category !== categoryFilter) return false;
+    if (difficultyFilter && qd2?.difficulty !== difficultyFilter) return false;
+    return true;
+  });
   const hasCause=hasCauseForEst;
   const causeList=causeListForEst;
   const causeLabels=causeLabelsForEst;
@@ -268,21 +280,47 @@ export default function Home() {
             <div style={{padding:'8px 12px',borderBottom:'1px solid #e5e7eb',background:'#f8f9fc',flexShrink:0}}>
               <div style={{fontSize:9,fontWeight:700,color:'#2563eb',letterSpacing:'.08em'}}>PANE 1</div>
               <div style={{fontSize:11,fontWeight:700}}>問題一覧（復習優先・SM-2）</div>
-              <div style={{display:'flex',alignItems:'center',gap:8,marginTop:4}}>
+              <div style={{display:'flex',flexWrap:'wrap',gap:8,marginTop:8}}>
+                <div style={{display:'flex',flexDirection:'column',gap:4,flex:1,minWidth:140}}>
+                  <label style={{fontSize:10,fontWeight:700,color:'#6b7280'}}>カテゴリ</label>
+                  <select value={categoryFilter ?? ''} onChange={e=>setCategoryFilter(e.target.value||null)} style={{padding:'8px',borderRadius:8,border:'1.5px solid #e5e7eb',fontSize:11}}>
+                    <option value="">すべて</option>
+                    {CATEGORY_OPTIONS.map(opt=><option key={opt.id} value={opt.id}>{opt.emoji} {opt.label}</option>)}
+                  </select>
+                </div>
+                <div style={{display:'flex',flexDirection:'column',gap:4,flex:1,minWidth:140}}>
+                  <label style={{fontSize:10,fontWeight:700,color:'#6b7280'}}>難易度</label>
+                  <select value={difficultyFilter ?? ''} onChange={e=>setDifficultyFilter(e.target.value||null)} style={{padding:'8px',borderRadius:8,border:'1.5px solid #e5e7eb',fontSize:11}}>
+                    <option value="">すべて</option>
+                    {DIFFICULTY_OPTIONS.map(opt=><option key={opt.id} value={opt.id}>{opt.emoji} {opt.label}</option>)}
+                  </select>
+                </div>
+                <div style={{marginLeft:'auto',alignSelf:'flex-end',fontSize:11,color:'#6b7280'}}>{filteredQs.length} / {QS.length} 件</div>
+              </div>
+              <div style={{display:'flex',alignItems:'center',gap:8,marginTop:8}}>
                 <div style={{height:4,background:'#e5e7eb',borderRadius:2,flex:1,maxWidth:160}}><div style={{height:'100%',background:'#2563eb',borderRadius:2,width:`${Math.round(doneCount/QS.length*100)}%`,transition:'width .4s'}}/></div>
                 <span style={{fontSize:11,color:'#6b7280'}}>{doneCount}/{QS.length}問</span>
               </div>
             </div>
             <div style={{flex:1,overflowY:'auto',padding:8}}>
-              {sortedQ().map(q2=>{
-                const qd2=questions[q2.id];const lc=latestCauses[q2.id];
+              {filteredQs.length===0 ? (
+                <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',height:140,color:'#6b7280',fontSize:11,textAlign:'center'}}>該当する問題がありません。フィルタを変更してください。</div>
+              ) : filteredQs.map(q2=>{
+                const qd2=questions[q2.id];
+                const lc=latestCauses[q2.id];
                 const rl=lc?.isCorrect?SUCCESS_FACTORS:CAUSES;
                 const cs=lc?.causes?.length?lc.causes.map(c=>rl.find(x=>x.id===c)?.label).join('・'):'';
+                const categoryMeta = qd2?.category ? getCategoryMeta(qd2.category) : undefined;
+                const difficultyMeta = qd2?.difficulty ? getDifficultyMeta(qd2.difficulty) : undefined;
                 return(<div key={q2.id} onClick={()=>handleSel(q2.id)} style={{padding:'8px 10px',borderRadius:8,border:`1.5px solid ${cur===q2.id?'#bfdbfe':'transparent'}`,marginBottom:4,cursor:'pointer',background:cur===q2.id?'#eff6ff':'transparent'}}>
                   <div style={{display:'flex',alignItems:'center',gap:6}}>
                     <span style={{fontSize:10,color:'#6b7280',minWidth:22,fontFamily:'monospace'}}>Q{q2.id+1}</span>
                     <span style={{fontSize:11,flex:1,lineHeight:1.4}}>{trunc(q2.text,28)}</span>
                     <span style={bdgStyle(qd2?.rank)}>{qd2?.rank??'未'}</span>
+                  </div>
+                  <div style={{display:'flex',flexWrap:'wrap',gap:6,marginTop:6,alignItems:'center'}}>
+                    {categoryMeta&&<span style={{fontSize:10,color:'#2563eb',background:'#eff6ff',borderRadius:6,padding:'2px 6px'}}>{categoryMeta.emoji} {categoryMeta.label}</span>}
+                    {difficultyMeta&&<span style={{fontSize:10,color:'#0f5132',background:'#d1fae5',borderRadius:6,padding:'2px 6px'}}>{difficultyMeta.emoji} {difficultyMeta.label}</span>}
                   </div>
                   {(qd2?.lastAttempt||cs||qd2?.nextReviewDate)&&<div style={{fontSize:10,color:'#6b7280',marginTop:3,paddingLeft:28}}>{[qd2?.nextReviewDate?fmtReviewDate(qd2.nextReviewDate):'',qd2?.lastAttempt?`前回 ${fmtDate(qd2.lastAttempt)}`:'',cs].filter(Boolean).join('　')}</div>}
                 </div>);

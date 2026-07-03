@@ -16,10 +16,17 @@ function toDateString(value: unknown): string {
   return String(value).slice(0, 10);
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
     const db = sql();
-    const rows = await db`SELECT * FROM question_summary`;
+    const url = new URL(req.url);
+    const category = url.searchParams.get('category');
+    const difficulty = url.searchParams.get('difficulty');
+    const rows = await db`
+      SELECT * FROM question_summary
+      WHERE (${category} IS NULL OR category = ${category})
+        AND (${difficulty} IS NULL OR difficulty = ${difficulty})
+    `;
     return NextResponse.json({ questions: rows });
   } catch (e) {
     console.error(e);
@@ -29,7 +36,7 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   try {
-    const { qid, rank, attemptCount, correctCount, lastAttempt, isCorrect } = await req.json();
+    const { qid, rank, attemptCount, correctCount, lastAttempt, isCorrect, category, difficulty } = await req.json();
     const db = sql();
 
     const existing = await db`
@@ -73,16 +80,18 @@ export async function POST(req: NextRequest) {
 
     await db`
       INSERT INTO question_summary (
-        qid, rank, attempt_count, correct_count, last_attempt,
+        qid, rank, category, difficulty, attempt_count, correct_count, last_attempt,
         easiness_factor, interval_days, repetitions, next_review_date,
         consecutive_correct, consecutive_wrong, last_attempt_date
       ) VALUES (
-        ${qid}, ${rank}, ${attemptCount}, ${correctCount}, ${lastAttempt},
+        ${qid}, ${rank}, ${category}, ${difficulty}, ${attemptCount}, ${correctCount}, ${lastAttempt},
         ${easinessFactor}, ${intervalDays}, ${repetitions}, ${nextReviewDate},
         ${consecutiveCorrect}, ${consecutiveWrong}, ${lastAttemptDate}
       )
       ON CONFLICT (qid) DO UPDATE SET
         rank = EXCLUDED.rank,
+        category = EXCLUDED.category,
+        difficulty = EXCLUDED.difficulty,
         attempt_count = EXCLUDED.attempt_count,
         correct_count = EXCLUDED.correct_count,
         last_attempt = EXCLUDED.last_attempt,
