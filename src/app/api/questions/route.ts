@@ -22,11 +22,27 @@ export async function GET(req: NextRequest) {
     const url = new URL(req.url);
     const category = url.searchParams.get('category');
     const difficulty = url.searchParams.get('difficulty');
-    const rows = await db`
-      SELECT * FROM question_summary
-      WHERE (${category} IS NULL OR category = ${category})
-        AND (${difficulty} IS NULL OR difficulty = ${difficulty})
-    `;
+
+    let rows;
+    if (category && difficulty) {
+      rows = await db`
+        SELECT * FROM question_summary
+        WHERE category = ${category} AND difficulty = ${difficulty}
+      `;
+    } else if (category) {
+      rows = await db`
+        SELECT * FROM question_summary
+        WHERE category = ${category}
+      `;
+    } else if (difficulty) {
+      rows = await db`
+        SELECT * FROM question_summary
+        WHERE difficulty = ${difficulty}
+      `;
+    } else {
+      rows = await db`SELECT * FROM question_summary`;
+    }
+
     return NextResponse.json({ questions: rows });
   } catch (e) {
     console.error(e);

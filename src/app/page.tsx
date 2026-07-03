@@ -8,7 +8,8 @@ import { getCategoryMeta, getCategoryOptions } from '@/lib/categoryLabels';
 import { getDifficultyMeta, getDifficultyOptions } from '@/lib/difficultyLabels';
 import HomeScreen from '@/components/HomeScreen';
 
-const QS = [
+interface LegacyQuestionItem { id:number; text:string; type:'ox'|'sel'; answer:boolean|number; explain:string; point:string; principle:string; choices?:string[]; }
+const QS: LegacyQuestionItem[] = [
   {id:0,text:'「システム状態の視認性」とは、ユーザーに現在の状態を常に知らせることを意味する。',type:'ox',answer:true,explain:'適切なフィードバックを適切なタイミングで提供し、ユーザーが現在何が起きているか常に把握できるようにすることです。',point:'進行状況バー、ローディングスピナーなどが代表例。',principle:'第1原則：システム状態の視認性'},
   {id:1,text:'「エラー防止」の原則は「エラーメッセージ」の原則よりも優先度が低い。',type:'ox',answer:false,explain:'エラーを防ぐことはエラー後に対処することよりも重要です。エラー防止の方が優先度が高い。',point:'確認ダイアログ、制約付き入力などが代表例。',principle:'第5原則：エラー防止'},
   {id:2,text:'ユーザーの記憶負荷を最小化するために行うべきことはどれか？',type:'sel',choices:['すべての情報を一画面に表示する','オブジェクト・行動・選択肢を可視化する','テキストのみのインターフェースを使用する','ショートカットキーを廃止する'],answer:1,explain:'「認識対想起」の原則では、ユーザーが記憶するのではなく見て認識できるようにすることが重要です。',point:'ドロップダウン、アイコン、ツールチップが記憶負荷を下げる。',principle:'第6原則：認識対想起'},
@@ -22,6 +23,7 @@ const CAUSES = getCauseOptions(false);
 const SUCCESS_FACTORS = getCauseOptions(true);
 const CATEGORY_OPTIONS = getCategoryOptions();
 const DIFFICULTY_OPTIONS = getDifficultyOptions();
+interface QuestionItem { qid:number; question_text:string; choices:string[]; correct_index:number; category?:string; difficulty?:string; type?:'ox'|'sel'; answer?: boolean; explain?: string; point?: string; principle?: string; }
 interface QSummary{rank:'A'|'B'|'C';category?:string;difficulty?:string;attemptCount:number;correctCount:number;lastAttempt:string|null;easinessFactor:number;intervalDays:number;repetitions:number;nextReviewDate:string|null;consecutiveCorrect:number;consecutiveWrong:number;}
 interface HistRecord{id:string;qid:number;timestamp:string;isCorrect:boolean;causes:string[];memo:string;actions:string[];rank:'A'|'B'|'C';suggestedRank?:'A'|'B'|'C'|null;}
 interface QuestionHistory{timestamp:string;isCorrect:boolean;causes:string[];memo:string;rank:'A'|'B'|'C';actions:string[];}
@@ -68,8 +70,17 @@ export default function Home() {
   const [selectedPeriod, setSelectedPeriod] = useState<'7d'|'30d'|'all'>('7d');
   const [statsLoading, setStatsLoading] = useState(false);
   const [causeLoading, setCauseLoading] = useState(false);
-  const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
-  const [difficultyFilter, setDifficultyFilter] = useState<string | null>(null);
+  const [categoryFilter, setCategoryFilter] = useState<string>('');
+  const [difficultyFilter, setDifficultyFilter] = useState<string>('');
+  const [questionsList, setQuestionsList] = useState<QuestionItem[]>([]);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newQuestionText, setNewQuestionText] = useState('');
+  const [newChoices, setNewChoices] = useState<string[]>(['', '', '', '']);
+  const [newCorrectIndex, setNewCorrectIndex] = useState<number | null>(null);
+  const [newCategory, setNewCategory] = useState<string>(CATEGORY_OPTIONS[0]?.id ?? '');
+  const [newDifficulty, setNewDifficulty] = useState<string>(DIFFICULTY_OPTIONS[0]?.id ?? '');
+  const [isAddingQuestion, setIsAddingQuestion] = useState(false);
+  const [addError, setAddError] = useState('');
 
   const fetchQuestionHistory = useCallback(async (qid:number)=>{
     setHistoryLoading(true);
@@ -84,11 +95,20 @@ export default function Home() {
   const fetchAll = useCallback(async () => {
     setLoading(true);
     try {
-      const [hRes,qRes,lcRes] = await Promise.all([fetch('/api/history'),fetch('/api/questions'),fetch('/api/latest-causes')]);
-      const hData=await hRes.json(); const qData=await qRes.json(); const lcData=await lcRes.json();
+      const [hRes,qRes,qListRes,lcRes] = await Promise.all([
+        fetch('/api/history'),
+        fetch('/api/questions'),
+        fetch('/api/questions/list'),
+        fetch('/api/latest-causes'),
+      ]);
+      const hData=await hRes.json();
+      const qData=await qRes.json();
+      const qListData=await qListRes.json();
+      const lcData=await lcRes.json();
       const qMap:Record<number,QSummary>={};
       for(const r of qData.questions??[]){qMap[r.qid]={rank:r.rank,category:r.category ?? undefined,difficulty:r.difficulty ?? undefined,attemptCount:r.attempt_count,correctCount:r.correct_count,lastAttempt:r.last_attempt,easinessFactor:r.easiness_factor??2.5,intervalDays:r.interval_days??1,repetitions:r.repetitions??0,nextReviewDate:r.next_review_date?String(r.next_review_date).slice(0,10):null,consecutiveCorrect:r.consecutive_correct??0,consecutiveWrong:r.consecutive_wrong??0};}
       setQuestions(qMap);
+      setQuestionsList(qListData.questions ?? []);
       setHistory((hData.history??[]).map((r:Record<string,unknown>)=>({id:r.id,qid:r.qid,timestamp:r.timestamp,isCorrect:r.is_correct,causes:r.causes,memo:r.memo,actions:r.actions,rank:r.rank,suggestedRank:r.suggested_rank??null})));
       const lcMap:Record<number,LatestCause>={};
       for(const r of lcData.latestCauses??[]){lcMap[r.qid]={isCorrect:r.is_correct,causes:r.causes};}
@@ -106,22 +126,101 @@ export default function Home() {
   useEffect(()=>{setSelectedActions({});},[cur,answered,causes,sessionRank]);
   useEffect(()=>{setRankUserModified(false);setSessionRank(null);},[cur,answered,causes]);
 
+  const mergedQuestions = (() => {
+    const map = new Map<number, QuestionItem>();
+    questionsList.forEach((item) => map.set(item.qid, { ...item, type: 'sel' }));
+    for (const q of QS) {
+      if (!map.has(q.id)) {
+        const choices = q.type === 'ox' ? ['○', '×'] : q.choices ?? [];
+        const correct_index = q.type === 'ox' ? (q.answer ? 0 : 1) : (typeof q.answer === 'number' ? q.answer : 0);
+        map.set(q.id, {
+          qid: q.id,
+          question_text: q.text,
+          choices,
+          correct_index,
+          category: undefined,
+          difficulty: undefined,
+          type: q.type,
+          answer: typeof q.answer === 'boolean' ? q.answer : undefined,
+          explain: q.explain,
+          point: q.point,
+          principle: q.principle,
+        });
+      }
+    }
+    return Array.from(map.values());
+  })();
+
   const sortedQ=()=>{
     if(planSortOrder&&planSortOrder.length>0){
       const orderMap=new Map(planSortOrder.map((id,i)=>[id,i]));
-      return [...QS].sort((a,b)=>{
-        const ia=orderMap.get(a.id);const ib=orderMap.get(b.id);
+      return [...mergedQuestions].sort((a,b)=>{
+        const ia=orderMap.get(a.qid);const ib=orderMap.get(b.qid);
         if(ia!==undefined&&ib!==undefined)return ia-ib;
         if(ia!==undefined)return -1;
         if(ib!==undefined)return 1;
-        return a.id-b.id;
+        return a.qid-b.qid;
       });
     }
     const O={C:0,B:1,A:2};
-    return [...QS].sort((a,b)=>{const [pa,da]=reviewSortKey(a.id,questions);const [pb,db]=reviewSortKey(b.id,questions);if(pa!==pb)return pa-pb;if(da!==db)return da<db?-1:1;return (O[questions[a.id]?.rank??'C']??3)-(O[questions[b.id]?.rank??'C']??3);});
+    return [...mergedQuestions].sort((a,b)=>{const [pa,da]=reviewSortKey(a.qid,questions);const [pb,db]=reviewSortKey(b.qid,questions);if(pa!==pb)return pa-pb;if(da!==db)return da<db?-1:1;return (O[questions[a.qid]?.rank??'C']??3)-(O[questions[b.qid]?.rank??'C']??3);});
   };
 
   const handleStartLearning=(sortOrder:number[])=>{setPlanSortOrder(sortOrder);setShowHomeScreen(false);};
+
+  const resetAddForm = () => {
+    setNewQuestionText('');
+    setNewChoices(['', '', '', '']);
+    setNewCorrectIndex(null);
+    setNewCategory(CATEGORY_OPTIONS[0]?.id ?? '');
+    setNewDifficulty(DIFFICULTY_OPTIONS[0]?.id ?? '');
+    setAddError('');
+  };
+
+  const handleAddQuestion = async () => {
+    const trimmedText = newQuestionText.trim();
+    const filteredChoices = newChoices.map((choice) => choice.trim()).filter(Boolean);
+    if (!trimmedText) {
+      setAddError('問題文を入力してください');
+      return;
+    }
+    if (filteredChoices.length < 2) {
+      setAddError('選択肢を2つ以上入力してください');
+      return;
+    }
+    if (newCorrectIndex === null || newCorrectIndex < 0 || newCorrectIndex >= filteredChoices.length) {
+      setAddError('正解の選択肢を選んでください');
+      return;
+    }
+    setIsAddingQuestion(true);
+    setAddError('');
+    try {
+      const res = await fetch('/api/questions/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          question_text: trimmedText,
+          choices: filteredChoices,
+          correct_index: newCorrectIndex,
+          category: newCategory || null,
+          difficulty: newDifficulty || null,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setAddError(data?.error ?? '作成に失敗しました');
+        return;
+      }
+      await fetchAll();
+      resetAddForm();
+      setShowAddForm(false);
+    } catch (e) {
+      console.error(e);
+      setAddError('作成に失敗しました');
+    } finally {
+      setIsAddingQuestion(false);
+    }
+  };
 
   const handleSave=async()=>{
     if(cur===null||answered===null)return;
@@ -159,8 +258,13 @@ export default function Home() {
 
   const setRank=(r:'A'|'B'|'C')=>{setSessionRank(r);setRankUserModified(true);};
 
+  const currentQuestion = cur!==null? mergedQuestions.find((item)=>item.qid===cur) ?? null : null;
   const handleSel=(qid:number)=>{setCur(qid);setSelAns(null);setAnswered(null);setCauses({});setMemo('');setSelectedActions({});setSessionRank(null);setRankUserModified(false);};
-  const handleSubmit=()=>{if(cur===null||selAns===null)return;setAnswered(selAns===QS[cur].answer);};
+  const handleSubmit=()=>{
+    if(cur===null||selAns===null||!currentQuestion)return;
+    const isCorrect = currentQuestion.type==='ox' ? selAns===currentQuestion.answer : selAns===currentQuestion.correct_index;
+    setAnswered(isCorrect);
+  };
 
   const qdForEst=cur!==null?(questions[cur]??EMPTY_Q):null;
   const hasCauseForEst=Object.values(causes).some(Boolean);
@@ -235,12 +339,12 @@ export default function Home() {
   if(loading)return <div style={{display:'flex',alignItems:'center',justifyContent:'center',height:'100vh',fontSize:14,color:'#6b7280'}}>読み込み中…</div>;
 
   const doneCount=Object.keys(questions).length;
-  const q=cur!==null?QS[cur]:null;
   const qd=cur!==null?(questions[cur]??EMPTY_Q):null;
-  const filteredQs = sortedQ().filter((q)=>{
-    const qd2 = questions[q.id];
-    if (categoryFilter && qd2?.category !== categoryFilter) return false;
-    if (difficultyFilter && qd2?.difficulty !== difficultyFilter) return false;
+  const filteredQs = sortedQ().filter((question)=>{
+    const category = question.category ?? questions[question.qid]?.category;
+    const difficulty = question.difficulty ?? questions[question.qid]?.difficulty;
+    if (categoryFilter !== '' && category !== categoryFilter) return false;
+    if (difficultyFilter !== '' && difficulty !== difficultyFilter) return false;
     return true;
   });
   const hasCause=hasCauseForEst;
@@ -260,7 +364,7 @@ export default function Home() {
           <span style={{fontSize:16,fontWeight:900,letterSpacing:'-0.03em'}}>勉強<span style={{color:'#2563eb'}}>ナビ</span></span>
           <span style={{fontSize:11,color:'#6b7280',border:'1px solid #e5e7eb',padding:'2px 10px',borderRadius:20}}>学習改善システム</span>
         </div>
-        <span style={{fontSize:11,color:'#6b7280'}}>{doneCount}/{QS.length}問完了</span>
+        <span style={{fontSize:11,color:'#6b7280'}}>{doneCount}/{mergedQuestions.length}問完了</span>
       </div>
       <div style={{display:'flex',borderBottom:'1.5px solid #e5e7eb',padding:'0 20px',background:'#fff'}}>
         {(['learn','history','stats'] as const).map(t=>(
@@ -283,39 +387,99 @@ export default function Home() {
               <div style={{display:'flex',flexWrap:'wrap',gap:8,marginTop:8}}>
                 <div style={{display:'flex',flexDirection:'column',gap:4,flex:1,minWidth:140}}>
                   <label style={{fontSize:10,fontWeight:700,color:'#6b7280'}}>カテゴリ</label>
-                  <select value={categoryFilter ?? ''} onChange={e=>setCategoryFilter(e.target.value||null)} style={{padding:'8px',borderRadius:8,border:'1.5px solid #e5e7eb',fontSize:11}}>
+                  <select value={categoryFilter} onChange={e=>setCategoryFilter(e.target.value)} style={{padding:'8px',borderRadius:8,border:'1.5px solid #e5e7eb',fontSize:11}}>
                     <option value="">すべて</option>
                     {CATEGORY_OPTIONS.map(opt=><option key={opt.id} value={opt.id}>{opt.emoji} {opt.label}</option>)}
                   </select>
                 </div>
                 <div style={{display:'flex',flexDirection:'column',gap:4,flex:1,minWidth:140}}>
                   <label style={{fontSize:10,fontWeight:700,color:'#6b7280'}}>難易度</label>
-                  <select value={difficultyFilter ?? ''} onChange={e=>setDifficultyFilter(e.target.value||null)} style={{padding:'8px',borderRadius:8,border:'1.5px solid #e5e7eb',fontSize:11}}>
+                  <select value={difficultyFilter} onChange={e=>setDifficultyFilter(e.target.value)} style={{padding:'8px',borderRadius:8,border:'1.5px solid #e5e7eb',fontSize:11}}>
                     <option value="">すべて</option>
                     {DIFFICULTY_OPTIONS.map(opt=><option key={opt.id} value={opt.id}>{opt.emoji} {opt.label}</option>)}
                   </select>
                 </div>
-                <div style={{marginLeft:'auto',alignSelf:'flex-end',fontSize:11,color:'#6b7280'}}>{filteredQs.length} / {QS.length} 件</div>
+                <div style={{display:'flex',gap:8,alignItems:'flex-end'}}>
+                  <button onClick={()=>setShowAddForm((v)=>!v)} style={{padding:'8px 12px',borderRadius:8,border:'1.5px solid #2563eb',background:showAddForm?'#eff6ff':'#fff',color:'#2563eb',fontSize:11,fontWeight:700,cursor:'pointer'}}>＋ 問題を追加</button>
+                </div>
+                <div style={{marginLeft:'auto',alignSelf:'flex-end',fontSize:11,color:'#6b7280'}}>{filteredQs.length} / {mergedQuestions.length} 件</div>
               </div>
+              {showAddForm && (
+                <div style={{marginTop:12,padding:12,border:'1.5px solid #e5e7eb',borderRadius:12,background:'#f8f9fc'}}>
+                  <div style={{fontSize:11,fontWeight:700,color:'#111827',marginBottom:8}}>DB 登録 問題作成フォーム</div>
+                  <div style={{display:'flex',flexDirection:'column',gap:8}}>
+                    <textarea
+                      value={newQuestionText}
+                      onChange={(e)=>setNewQuestionText(e.target.value)}
+                      rows={3}
+                      placeholder='問題文を入力してください'
+                      style={{width:'100%',border:'1.5px solid #e5e7eb',borderRadius:10,padding:10,fontSize:11,fontFamily:'inherit',resize:'vertical'}}
+                    />
+                    <div style={{display:'grid',gridTemplateColumns:'repeat(2,minmax(0,1fr))',gap:8}}>
+                      {newChoices.map((choice, index) => (
+                        <label key={index} style={{display:'flex',flexDirection:'column',fontSize:11,color:'#374151'}}>
+                          {`選択肢 ${String.fromCharCode(65+index)}`}
+                          <input
+                            value={choice}
+                            onChange={(e)=>{
+                              const next=[...newChoices];
+                              next[index]=e.target.value;
+                              setNewChoices(next);
+                            }}
+                            placeholder='選択肢を入力'
+                            style={{marginTop:4,padding:10,border:'1.5px solid #e5e7eb',borderRadius:10,fontSize:11,outline:'none'}}
+                          />
+                        </label>
+                      ))}
+                    </div>
+                    <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
+                      <div style={{display:'flex',flexDirection:'column',flex:1,minWidth:160,fontSize:11,color:'#374151'}}>
+                        <label style={{fontWeight:700,marginBottom:4}}>正解の選択肢</label>
+                        <select value={newCorrectIndex===null?'':String(newCorrectIndex)} onChange={(e)=>setNewCorrectIndex(e.target.value===''?null:Number(e.target.value))} style={{padding:10,borderRadius:10,border:'1.5px solid #e5e7eb',fontSize:11}}>
+                          <option value=''>選択してください</option>
+                          {newChoices.map((choice,index)=>choice.trim() ? <option key={index} value={index}>{String.fromCharCode(65+index)}. {choice}</option> : null)}
+                        </select>
+                      </div>
+                      <div style={{display:'flex',flexDirection:'column',gap:4,flex:1,minWidth:160}}>
+                        <label style={{fontSize:11,fontWeight:700,color:'#374151'}}>カテゴリ</label>
+                        <select value={newCategory} onChange={(e)=>setNewCategory(e.target.value)} style={{padding:10,borderRadius:10,border:'1.5px solid #e5e7eb',fontSize:11}}>
+                          {CATEGORY_OPTIONS.map(opt=><option key={opt.id} value={opt.id}>{opt.emoji} {opt.label}</option>)}
+                        </select>
+                      </div>
+                      <div style={{display:'flex',flexDirection:'column',gap:4,flex:1,minWidth:160}}>
+                        <label style={{fontSize:11,fontWeight:700,color:'#374151'}}>難易度</label>
+                        <select value={newDifficulty} onChange={(e)=>setNewDifficulty(e.target.value)} style={{padding:10,borderRadius:10,border:'1.5px solid #e5e7eb',fontSize:11}}>
+                          {DIFFICULTY_OPTIONS.map(opt=><option key={opt.id} value={opt.id}>{opt.emoji} {opt.label}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                    {addError && <div style={{color:'#dc2626',fontSize:11}}>{addError}</div>}
+                    <div style={{display:'flex',gap:8,justifyContent:'flex-end',flexWrap:'wrap'}}>
+                      <button type='button' onClick={()=>{resetAddForm();setShowAddForm(false);}} style={{padding:'8px 14px',borderRadius:10,border:'1.5px solid #e5e7eb',background:'#fff',color:'#374151',fontSize:11,cursor:'pointer'}}>キャンセル</button>
+                      <button type='button' onClick={handleAddQuestion} disabled={isAddingQuestion} style={{padding:'8px 14px',borderRadius:10,border:'none',background:'#2563eb',color:'#fff',fontSize:11,cursor:'pointer'}}>{isAddingQuestion?'登録中…':'DB に登録する'}</button>
+                    </div>
+                  </div>
+                </div>
+              )}
               <div style={{display:'flex',alignItems:'center',gap:8,marginTop:8}}>
-                <div style={{height:4,background:'#e5e7eb',borderRadius:2,flex:1,maxWidth:160}}><div style={{height:'100%',background:'#2563eb',borderRadius:2,width:`${Math.round(doneCount/QS.length*100)}%`,transition:'width .4s'}}/></div>
-                <span style={{fontSize:11,color:'#6b7280'}}>{doneCount}/{QS.length}問</span>
+                <div style={{height:4,background:'#e5e7eb',borderRadius:2,flex:1,maxWidth:160}}><div style={{height:'100%',background:'#2563eb',borderRadius:2,width:`${Math.round(doneCount/Math.max(1,mergedQuestions.length)*100)}%`,transition:'width .4s'}}/></div>
+                <span style={{fontSize:11,color:'#6b7280'}}>{doneCount}/{mergedQuestions.length}問</span>
               </div>
             </div>
             <div style={{flex:1,overflowY:'auto',padding:8}}>
               {filteredQs.length===0 ? (
                 <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',height:140,color:'#6b7280',fontSize:11,textAlign:'center'}}>該当する問題がありません。フィルタを変更してください。</div>
               ) : filteredQs.map(q2=>{
-                const qd2=questions[q2.id];
-                const lc=latestCauses[q2.id];
+                const qd2=questions[q2.qid];
+                const lc=latestCauses[q2.qid];
                 const rl=lc?.isCorrect?SUCCESS_FACTORS:CAUSES;
                 const cs=lc?.causes?.length?lc.causes.map(c=>rl.find(x=>x.id===c)?.label).join('・'):'';
                 const categoryMeta = qd2?.category ? getCategoryMeta(qd2.category) : undefined;
                 const difficultyMeta = qd2?.difficulty ? getDifficultyMeta(qd2.difficulty) : undefined;
-                return(<div key={q2.id} onClick={()=>handleSel(q2.id)} style={{padding:'8px 10px',borderRadius:8,border:`1.5px solid ${cur===q2.id?'#bfdbfe':'transparent'}`,marginBottom:4,cursor:'pointer',background:cur===q2.id?'#eff6ff':'transparent'}}>
+                return(<div key={q2.qid} onClick={()=>handleSel(q2.qid)} style={{padding:'8px 10px',borderRadius:8,border:`1.5px solid ${cur===q2.qid?'#bfdbfe':'transparent'}`,marginBottom:4,cursor:'pointer',background:cur===q2.qid?'#eff6ff':'transparent'}}>
                   <div style={{display:'flex',alignItems:'center',gap:6}}>
-                    <span style={{fontSize:10,color:'#6b7280',minWidth:22,fontFamily:'monospace'}}>Q{q2.id+1}</span>
-                    <span style={{fontSize:11,flex:1,lineHeight:1.4}}>{trunc(q2.text,28)}</span>
+                    <span style={{fontSize:10,color:'#6b7280',minWidth:22,fontFamily:'monospace'}}>Q{q2.qid+1}</span>
+                    <span style={{fontSize:11,flex:1,lineHeight:1.4}}>{trunc(q2.question_text,28)}</span>
                     <span style={bdgStyle(qd2?.rank)}>{qd2?.rank??'未'}</span>
                   </div>
                   <div style={{display:'flex',flexWrap:'wrap',gap:6,marginTop:6,alignItems:'center'}}>
@@ -331,12 +495,12 @@ export default function Home() {
           <div style={{borderRight:'1px solid #e5e7eb',display:'flex',flexDirection:'column',overflow:'hidden'}}>
             <div style={{padding:'8px 12px',borderBottom:'1px solid #e5e7eb',background:'#f8f9fc',flexShrink:0}}>
               <div style={{fontSize:9,fontWeight:700,color:'#2563eb',letterSpacing:'.08em'}}>PANE 2</div>
-              <div style={{fontSize:11,fontWeight:700}}>{q?`Q${q.id+1} ${q.principle}`:'問題と解答'}</div>
+              <div style={{fontSize:11,fontWeight:700}}>{currentQuestion?`Q${currentQuestion.qid+1} ${currentQuestion.principle}`:'問題と解答'}</div>
             </div>
             <div style={{flex:1,overflowY:'auto',padding:8}}>
-              {!q?<div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',height:140,color:'#6b7280',fontSize:11,textAlign:'center'}}>← 問題を選んでください</div>:(
+              {!currentQuestion?<div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',height:140,color:'#6b7280',fontSize:11,textAlign:'center'}}>← 問題を選んでください</div>:(
                 <>
-                  <div style={{fontSize:12,lineHeight:1.7,padding:10,background:'#f8f9fc',borderRadius:8,marginBottom:10}}>{q.text}</div>
+                  <div style={{fontSize:12,lineHeight:1.7,padding:10,background:'#f8f9fc',borderRadius:8,marginBottom:10}}>{currentQuestion.question_text}</div>
                   {historyLoading?<HistorySkeleton/>:questionHistory.length===0?(
                     <div style={{background:'#eff6ff',border:'1.5px solid #bfdbfe',borderRadius:8,padding:10,marginBottom:10,fontSize:11,color:'#2563eb',fontWeight:700}}>🎉 はじめての挑戦です！</div>
                   ):(
@@ -357,19 +521,19 @@ export default function Home() {
                       )}
                     </div>
                   )}
-                  {q.type==='ox'?(
+                  {currentQuestion.type==='ox'?(
                     <div style={{display:'flex',gap:6,marginBottom:8}}>
                       {([true,false] as const).map(v=>{
                         let bg='#fff',border='1.5px solid #e5e7eb';
-                        if(answered!==null){if(v===q.answer){bg='#d1fae5';border='1.5px solid #059669';}else if(v===selAns){bg='#fee2e2';border='1.5px solid #dc2626';}}
+                        if(answered!==null){if(v===currentQuestion.answer){bg='#d1fae5';border='1.5px solid #059669';}else if(v===selAns){bg='#fee2e2';border='1.5px solid #dc2626';}}
                         else if(selAns===v){bg=v?'#d1fae5':'#fee2e2';border=`1.5px solid ${v?'#059669':'#dc2626'}`;}
                         return <button key={String(v)} onClick={()=>{if(answered===null)setSelAns(v);}} disabled={answered!==null} style={{flex:1,padding:10,fontSize:20,border,borderRadius:8,cursor:answered!==null?'default':'pointer',background:bg}}>{v?'○':'×'}</button>;
                       })}
                     </div>
                   ):(
-                    q.choices?.map((c,i)=>{
+                    currentQuestion.choices?.map((c,i)=>{
                       let bg='#fff',border='1.5px solid #e5e7eb';
-                      if(answered!==null){if(i===q.answer){bg='#d1fae5';border='1.5px solid #059669';}else if(i===selAns){bg='#fee2e2';border='1.5px solid #dc2626';}}
+                      if(answered!==null){if(i===currentQuestion.correct_index){bg='#d1fae5';border='1.5px solid #059669';}else if(i===selAns){bg='#fee2e2';border='1.5px solid #dc2626';}}
                       else if(selAns===i){bg='#eff6ff';border='1.5px solid #2563eb';}
                       return <button key={i} onClick={()=>{if(answered===null)setSelAns(i);}} disabled={answered!==null} style={{width:'100%',textAlign:'left',padding:'7px 10px',border,borderRadius:7,marginBottom:5,cursor:answered!==null?'default':'pointer',fontSize:11,fontFamily:'inherit',color:'#0f1117',background:bg}}>{String.fromCharCode(65+i)}. {c}</button>;
                     })
@@ -378,8 +542,8 @@ export default function Home() {
                     ?<button onClick={handleSubmit} disabled={selAns===null} style={{width:'100%',padding:8,borderRadius:8,border:'none',background:selAns===null?'#e5e7eb':'#2563eb',color:selAns===null?'#6b7280':'#fff',fontSize:11,fontWeight:700,cursor:selAns===null?'not-allowed':'pointer',marginTop:6}}>解答する</button>
                     :<>
                       <div style={{padding:'8px 12px',borderRadius:8,fontSize:12,fontWeight:700,marginBottom:8,background:answered?'#d1fae5':'#fee2e2',color:answered?'#059669':'#dc2626'}}>{answered?'✓ 正解！':'✗ 不正解'}</div>
-                      <div style={{background:'#f8f9fc',borderRadius:8,padding:9,marginBottom:8}}><div style={{fontSize:9,fontWeight:700,color:'#6b7280',marginBottom:3}}>解説</div><div style={{fontSize:11,lineHeight:1.6}}>{q.explain}</div></div>
-                      <div style={{background:'#f8f9fc',borderRadius:8,padding:9,marginBottom:8,borderLeft:'2px solid #2563eb'}}><div style={{fontSize:9,fontWeight:700,color:'#6b7280',marginBottom:3}}>ポイント</div><div style={{fontSize:11,lineHeight:1.6}}>{q.point}</div></div>
+                      <div style={{background:'#f8f9fc',borderRadius:8,padding:9,marginBottom:8}}><div style={{fontSize:9,fontWeight:700,color:'#6b7280',marginBottom:3}}>解説</div><div style={{fontSize:11,lineHeight:1.6}}>{currentQuestion.explain}</div></div>
+                      <div style={{background:'#f8f9fc',borderRadius:8,padding:9,marginBottom:8,borderLeft:'2px solid #2563eb'}}><div style={{fontSize:9,fontWeight:700,color:'#6b7280',marginBottom:3}}>ポイント</div><div style={{fontSize:11,lineHeight:1.6}}>{currentQuestion.point}</div></div>
                     </>
                   }
                 </>
@@ -671,13 +835,13 @@ export default function Home() {
 
           <div style={{border:'1.5px solid #e5e7eb',borderRadius:12,padding:20}}>
             <div style={{fontSize:13,fontWeight:700,marginBottom:14}}>問題別 正答率</div>
-            {QS.map(q2=>{
-              const qd2=questions[q2.id];
-              if(!qd2)return <div key={q2.id} style={{display:'flex',alignItems:'center',gap:8,marginBottom:8}}><span style={{fontSize:10,color:'#6b7280',width:90,textAlign:'right'}}>Q{q2.id+1}</span><div style={{flex:1,height:20,background:'#f8f9fc',borderRadius:4}}/><span style={{fontSize:11,color:'#6b7280',width:30,textAlign:'right'}}>-</span></div>;
+            {mergedQuestions.map(q2=>{
+              const qd2=questions[q2.qid];
+              if(!qd2)return <div key={q2.qid} style={{display:'flex',alignItems:'center',gap:8,marginBottom:8}}><span style={{fontSize:10,color:'#6b7280',width:90,textAlign:'right'}}>Q{q2.qid+1}</span><div style={{flex:1,height:20,background:'#f8f9fc',borderRadius:4}}/><span style={{fontSize:11,color:'#6b7280',width:30,textAlign:'right'}}>-</span></div>;
               const pct=Math.round(qd2.correctCount/qd2.attemptCount*100);
               const col=pct>=80?'#059669':pct>=50?'#d97706':'#dc2626';
-              return <div key={q2.id} style={{display:'flex',alignItems:'center',gap:8,marginBottom:8}}>
-                <span style={{fontSize:10,color:'#6b7280',width:90,textAlign:'right',flexShrink:0}}>Q{q2.id+1} <span style={bdgStyle(qd2.rank)}>{qd2.rank}</span></span>
+              return <div key={q2.qid} style={{display:'flex',alignItems:'center',gap:8,marginBottom:8}}>
+                <span style={{fontSize:10,color:'#6b7280',width:90,textAlign:'right',flexShrink:0}}>Q{q2.qid+1} <span style={bdgStyle(qd2.rank)}>{qd2.rank}</span></span>
                 <div style={{flex:1,height:20,background:'#f8f9fc',borderRadius:4,overflow:'hidden'}}><div style={{height:'100%',borderRadius:4,background:col,width:`${pct}%`,transition:'width .5s',minWidth:4}}/></div>
                 <span style={{fontSize:11,color:'#6b7280',width:35,textAlign:'right',fontFamily:'monospace'}}>{pct}%</span>
               </div>;
