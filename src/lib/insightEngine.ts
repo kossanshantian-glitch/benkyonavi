@@ -12,7 +12,7 @@ function average(points: AccuracyTrendPoint[]): number {
 
 export function generateAccuracyInsights(trendData: AccuracyTrendPoint[]): string[] {
   if (!trendData || trendData.length === 0) {
-    return ['データがありません。学習を記録すると傾向が見えるようになります。'];
+    return ['データがありません。問題を解いて記録すると、傾向が見えてきます。'];
   }
 
   const insights: string[] = [];
@@ -31,15 +31,15 @@ export function generateAccuracyInsights(trendData: AccuracyTrendPoint[]): strin
   const avgPrev7 = average(prev7);
 
   if (prev3.length === 3 && avg3 - avgPrev3 >= 0.1) {
-    insights.push('直近3日で正答率が上昇傾向にあります。好調を維持しましょう。');
+    insights.push('最近、正解が増えてきました！この調子で続けましょう。');
   } else if (prev3.length === 3 && avgPrev3 - avg3 >= 0.1) {
-    insights.push('直近3日で正答率が低下しています。復習の方法を見直しましょう。');
+    insights.push('少し正解が減ってきています。復習してみましょう。');
   }
 
   if (prev7.length === 7 && avg7 - avgPrev7 >= 0.1) {
-    insights.push('直近7日で着実に正答率が改善しています。継続するとさらに効果的です。');
+    insights.push('直近7日で正解が増えています！いい流れです。');
   } else if (prev7.length === 7 && avgPrev7 - avg7 >= 0.1) {
-    insights.push('直近7日で正答率が下降傾向です。学習量や復習内容を確認しましょう。');
+    insights.push('直近7日で少し正解が減っています。もう一度復習しよう。');
   }
 
   const decliningStreak = sorted.reduce((count, point, index) => {
@@ -47,22 +47,22 @@ export function generateAccuracyInsights(trendData: AccuracyTrendPoint[]): strin
     return point.rate < sorted[index - 1].rate ? count + 1 : 0;
   }, 0);
   if (decliningStreak >= 3) {
-    insights.push('正答率が連続して下がっています。直近の学習内容を振り返りましょう。');
+    insights.push(`${decliningStreak}日連続で正解が減っています。要注意です。`);
   }
 
   const minRate = Math.min(...sorted.map((p) => p.rate));
   const minPoint = sorted.find((p) => p.rate === minRate);
   if (minPoint) {
-    insights.push(`要注意日: ${minPoint.date.slice(5)} は正答率が最も低い日です。復習の優先度を上げましょう。`);
+    insights.push(`要注意: ${minPoint.date.slice(5)} は正答率が低めです。復習しましょう。`);
   }
 
   const lowVolumeDays = sorted.filter((p) => p.total <= 1).length;
   if (lowVolumeDays >= 3) {
-    insights.push('最近は解答数が少なめです。学習量を増やして習熟度を安定させましょう。');
+    insights.push('最近あまり問題を解けていないようです。もう少しチャレンジしてみましょう。');
   }
 
   if (insights.length === 0) {
-    insights.push('安定して学習できています。継続して学習習慣を維持しましょう。');
+    insights.push('こつこつ続けられています。引き続き学習を続けましょう。');
   }
 
   return insights.slice(0, 3);

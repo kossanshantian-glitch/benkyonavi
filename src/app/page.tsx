@@ -3,6 +3,7 @@ import { useEffect, useState, useCallback, type CSSProperties } from 'react';
 import { generateSuggestion } from '@/lib/suggestion-engine';
 import { estimateRank } from '@/lib/rank-estimator';
 import { generateAccuracyInsights, type AccuracyTrendPoint } from '@/lib/insightEngine';
+import { getCauseMeta, getCauseOptions } from '@/lib/causeLabels';
 import HomeScreen from '@/components/HomeScreen';
 
 const QS = [
@@ -14,22 +15,9 @@ const QS = [
   {id:5,text:'「ユーザーの制御と自由」は、誤操作の際に簡単に元に戻せることを保証する。',type:'ox',answer:true,explain:'「緊急脱出口」を提供することでユーザーは安心して操作できます。',point:'Ctrl+Z、キャンセルボタンなどが重要な実装例。',principle:'第3原則：ユーザーの制御と自由'},
   {id:6,text:'「審美的で最小限のデザイン」において適切でない行為はどれか？',type:'sel',choices:['不要な情報を削除する','重要な情報を強調する','すべての機能を一画面に詰め込む','白いスペースを活用する'],answer:2,explain:'不要な情報はすべての関連情報を薄めます。優先順位を明確にすることが重要です。',point:'情報の優先順位付け、余白、視覚的階層が核心。',principle:'第8原則：審美的で最小限のデザイン'},
 ];
-const CAUSES = [
-  {id:'knowledge',label:'知識不足',sub:'必要な知識を知らなかった',ico:'📚'},
-  {id:'understanding',label:'理解不足',sub:'知識はあるが理解が不十分',ico:'💡'},
-  {id:'skip',label:'読み飛ばし',sub:'問題文を正確に読んでいない',ico:'👁'},
-  {id:'calc',label:'計算ミス',sub:'計算過程でミスした',ico:'🔢'},
-  {id:'careless',label:'勘違い・思い込み',sub:'思い込みや勘違いをしていた',ico:'🤔'},
-  {id:'time',label:'ケアレスミス',sub:'注意不足によるミス',ico:'⚡'},
-];
-const SUCCESS_FACTORS = [
-  {id:'solid_knowledge',label:'知識が定着していた',sub:'用語・定義を正確に覚えていた',ico:'📚'},
-  {id:'deep_understanding',label:'概念を理解していた',sub:'なぜそうなるか説明できる',ico:'💡'},
-  {id:'careful_read',label:'問題文を丁寧に読めた',sub:'キーワードを正確に拾えた',ico:'👁'},
-  {id:'good_elimination',label:'消去法がうまくいった',sub:'選択肢を比較して絞れた',ico:'🔢'},
-  {id:'past_review',label:'前回の復習が効いた',sub:'過去の間違いを覚えていた',ico:'🔁'},
-  {id:'intuition',label:'直感が当たった',sub:'根拠は薄いが正解できた',ico:'⚡'},
-];
+
+const CAUSES = getCauseOptions(false);
+const SUCCESS_FACTORS = getCauseOptions(true);
 interface QSummary{rank:'A'|'B'|'C';attemptCount:number;correctCount:number;lastAttempt:string|null;easinessFactor:number;intervalDays:number;repetitions:number;nextReviewDate:string|null;consecutiveCorrect:number;consecutiveWrong:number;}
 interface HistRecord{id:string;qid:number;timestamp:string;isCorrect:boolean;causes:string[];memo:string;actions:string[];rank:'A'|'B'|'C';suggestedRank?:'A'|'B'|'C'|null;}
 interface QuestionHistory{timestamp:string;isCorrect:boolean;causes:string[];memo:string;rank:'A'|'B'|'C';actions:string[];}
@@ -521,7 +509,10 @@ export default function Home() {
               ) : (
                 <div style={{width: '100%', overflowX: 'auto'}}>
                   <div style={{position:'relative',width:'100%',minHeight:220,padding:'12px 0'}}>
-                    <svg viewBox="0 0 1000 240" preserveAspectRatio="none" style={{width:'100%',height:240}}>
+                      <div style={{padding:'8px 12px 0 12px'}}>
+                        <div style={{fontSize:18,fontWeight:900,marginBottom:6}}>{accuracyTrend.length?`今週は ${accuracyTrend.reduce((s,i)=>s+i.correct,0)}問中${Math.round((accuracyTrend.reduce((s,i)=>s+i.correct,0)/Math.max(1,accuracyTrend.reduce((s,i)=>s+i.total,0)))*100)}問正解！`:'データ不足'}</div>
+                      </div>
+                      <svg viewBox="0 0 1000 240" preserveAspectRatio="none" style={{width:'100%',height:240}}>
                       <defs>
                         <linearGradient id="trendGradient" x1="0" y1="0" x2="0" y2="1">
                           <stop offset="0%" stopColor="#2563eb" stopOpacity="0.24" />
@@ -545,7 +536,7 @@ export default function Home() {
                         const avgY = 220 - average * 2.2;
                         return (
                           <>
-                            <path d={`${path}`} fill="none" stroke="#2563eb" strokeWidth="3" />
+                            <path d={`${path}`} fill="none" stroke="#111827" strokeWidth="3" />
                             <path d={`${path} L ${points[points.length - 1].x} 220 L ${points[0].x} 220 Z`} fill="url(#trendGradient)" opacity="0.4" />
                             <line x1="20" y1={`${avgY}`} x2="980" y2={`${avgY}`} stroke="#d97706" strokeDasharray="8 6" strokeWidth="2" />
                             <text x="984" y={`${avgY - 6}`} fill="#d97706" fontSize="12" textAnchor="end">平均 {Math.round(average * 100)}%</text>
@@ -553,11 +544,15 @@ export default function Home() {
                               const radius = Math.min(10, 4 + Math.min(point.total, 5));
                               const opacity = point.total <= 1 ? 0.4 : point.total <= 2 ? 0.6 : 1;
                               const showLabel = accuracyTrend.length <= 7 || index === 0 || index === points.length - 1 || point.total <= 1 || point.rate === Math.max(...accuracyTrend.map((p) => p.rate));
+                              const color = point.rate >= 0.8 ? '#059669' : point.rate >= 0.6 ? '#10b981' : point.rate >= 0.4 ? '#f59e0b' : '#dc2626';
                               return (
                                 <g key={point.date}>
-                                  <circle cx={point.x} cy={point.y} r={radius} fill="#2563eb" opacity={opacity} />
+                                  <circle cx={point.x} cy={point.y} r={radius} fill={color} opacity={opacity} />
                                   {showLabel && (
-                                    <text x={point.x} y={point.y - radius - 8} fill="#0f172a" fontSize="12" fontWeight="700" textAnchor="middle">{Math.round(point.rate * 100)}%</text>
+                                    <>
+                                      <text x={point.x} y={point.y - radius - 20} fill="#0f172a" fontSize="12" fontWeight="700" textAnchor="middle">{Math.round(point.rate * 100)}%</text>
+                                      <text x={point.x} y={point.y - radius - 6} fill="#374151" fontSize="11" textAnchor="middle">{`${point.correct}/${point.total}問`}</text>
+                                    </>
                                   )}
                                   <text x={point.x} y="236" fill="#6b7280" fontSize="10" textAnchor="middle">{point.date.slice(5)}</text>
                                 </g>
@@ -603,21 +598,34 @@ export default function Home() {
                 <div style={{color: '#6b7280'}}>該当するデータがありません。</div>
               ) : (
                 <div style={{width: '100%', overflowX: 'auto'}}>
-                  <div style={{display: 'grid', gridTemplateColumns: `repeat(${causeDistribution.length}, minmax(120px, 1fr))`, gap: 12, alignItems: 'end', height: 180}}>
-                    {causeDistribution.map((item) => {
-                      const maxCount = Math.max(...causeDistribution.map((x) => x.count));
-                      const heightPercent = maxCount > 0 ? Math.round((item.count / maxCount) * 100) : 0;
-                      return (
-                        <div key={item.cause} style={{display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8}}>
-                          <div style={{width: '100%', background: '#f3f4f6', borderRadius: 8, height: '100%', display: 'flex', alignItems: 'flex-end'}}>
-                            <div style={{width: '100%', background: '#dc2626', borderRadius: 8, minHeight: 4, height: `${heightPercent}%`}} />
-                          </div>
-                          <div style={{fontSize: 11, fontWeight: 700, color: '#0f1117', textAlign: 'center', wordBreak: 'break-word'}}>{item.cause}</div>
-                          <div style={{fontSize: 10, color: '#6b7280'}}>{item.count}件</div>
+                  {(() => {
+                    const maxCount = Math.max(...causeDistribution.map((x) => x.count));
+                    const top = causeDistribution.reduce((a, b) => (a.count >= b.count ? a : b));
+                    const topMeta = getCauseMeta(top.cause ?? '');
+                    return (
+                      <>
+                        <div style={{padding: '8px 12px', marginBottom: 8, background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8}}>
+                          <div style={{fontSize:14,fontWeight:800}}>{topMeta.emoji} 一番多いのは「{topMeta.label}」でした</div>
+                          <div style={{fontSize:12,color:'#92400e'}}>{top.count}件（全体の{Math.round((top.count / Math.max(1, causeDistribution.reduce((s, i) => s + i.count, 0))) * 100)}%）</div>
                         </div>
-                      );
-                    })}
-                  </div>
+                        <div style={{display: 'grid', gridTemplateColumns: `repeat(${causeDistribution.length}, minmax(120px, 1fr))`, gap: 12, alignItems: 'end', height: 180}}>
+                          {causeDistribution.map((item) => {
+                            const heightPercent = maxCount > 0 ? Math.round((item.count / maxCount) * 100) : 0;
+                            const meta = getCauseMeta(item.cause);
+                            return (
+                              <div key={item.cause} style={{display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8}}>
+                                <div style={{width: '100%', background: '#f3f4f6', borderRadius: 8, height: '100%', display: 'flex', alignItems: 'flex-end'}}>
+                                  <div style={{width: '100%', background: item.cause===top.cause?'#f59e0b':'#60a5fa', borderRadius: 8, minHeight: 4, height: `${heightPercent}%`}} />
+                                </div>
+                                <div style={{fontSize: 12, fontWeight: 800, color: '#0f1117', textAlign: 'center', wordBreak: 'break-word'}}>{meta.emoji} {meta.label}</div>
+                                <div style={{fontSize: 10, color: '#6b7280'}}>{item.count}件</div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </>
+                    );
+                  })()}
                 </div>
               )}
             </div>
